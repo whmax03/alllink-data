@@ -1,11 +1,13 @@
-# SPA路由刷新404修复
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
-
-# 接口代理：把 /api/* 转发到 render后端
+# 【放在最前面！优先匹配接口代理】
 [[redirects]]
   from = "/api/*"
   to = "https://py-alllink.onrender.com/:splat"
+  status = 200
+  # 重点：必须加这个！POST、PUT等非GET请求代理才正常
+  force = true
+
+# 【放后面，剩下所有路径交给前端SPA路由】
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
   status = 200
