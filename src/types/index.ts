@@ -69,13 +69,15 @@ export interface SaihuPageResponse<T> {
 }
 
 /** 统一订单状态 */
-export enum UnifiedOrderStatus {
-  PENDING = 'pending',
-  SHIPPED = 'shipped',
-  DELIVERED = 'delivered',
-  RETURNED = 'returned',
-  CANCELLED = 'cancelled',
-}
+export const UnifiedOrderStatus = {
+  PENDING: 'pending',
+  SHIPPED: 'shipped',
+  DELIVERED: 'delivered',
+  RETURNED: 'returned',
+  CANCELLED: 'cancelled',
+} as const
+
+export type UnifiedOrderStatus = (typeof UnifiedOrderStatus)[keyof typeof UnifiedOrderStatus]
 
 /** 赛狐订单状态 -> 统一状态映射 */
 export const SAIHU_STATUS_MAP: Record<string, UnifiedOrderStatus> = {

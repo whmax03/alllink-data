@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { Box, DataAnalysis, List, Refresh, Setting, User, ArrowDown, Close, Lock } from '@element-plus/icons-vue'
+import { Box, DataAnalysis, Refresh, ArrowDown, Lock } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from './stores/auth'
 

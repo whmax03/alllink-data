@@ -1,8 +1,5 @@
 import { SAIHU_STATUS_MAP, UnifiedOrderStatus } from '../types/index.js'
 
-/** SKU映射缓存 */
-const skuCache = new Map<string, string>()
-
 /** 币种换算（简化版，实际应查汇率表） */
 const RATES: Record<string, number> = {
   USD: 7.2,

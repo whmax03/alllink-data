@@ -17,7 +17,7 @@ import CryptoJS from 'crypto-js'
 type Env = Record<string, string>
 
 export function createApiRouter(env: Env): Connect.NextHandleFunction {
-  return async (req, res, next) => {
+  return async (req, res) => {
     const url = new URL(req.url || '', 'http://localhost')
     const path = url.pathname
     const method = req.method || 'GET'
@@ -62,21 +62,6 @@ export function createApiRouter(env: Env): Connect.NextHandleFunction {
           const payloadStr = base64url({ ...payload, iat: Date.now() })
           const signature = CryptoJS.HmacSHA256(`${headerStr}.${payloadStr}`, JWT_SECRET).toString(CryptoJS.enc.Base64url)
           return `${headerStr}.${payloadStr}.${signature}`
-        }
-
-        // 验证 JWT token
-        function verifyToken(token: string): Record<string, any> | null {
-          try {
-            const parts = token.split('.')
-            if (parts.length !== 3) return null
-            const [headerStr, payloadStr, signature] = parts
-            const expectedSig = CryptoJS.HmacSHA256(`${headerStr}.${payloadStr}`, JWT_SECRET).toString(CryptoJS.enc.Base64url)
-            if (signature !== expectedSig) return null
-            const payload = JSON.parse(atob(payloadStr.replace(/-/g, '+').replace(/_/g, '/')))
-            return payload
-          } catch {
-            return null
-          }
         }
 
         // 密码哈希（SHA-256 + salt）

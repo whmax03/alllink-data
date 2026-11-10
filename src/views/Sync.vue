@@ -18,7 +18,7 @@ const syncButtons = [
 async function triggerSync(type: string) {
   syncing.value = type
   try {
-    let res
+    let res: any
     switch (type) {
       case 'orders':
         res = await syncApi.orders()
@@ -33,10 +33,10 @@ async function triggerSync(type: string) {
         res = await syncApi.finance()
         break
     }
-    if (res.data.success) {
-      ElMessage.success(res.data.message)
+    if (res!.data.success) {
+      ElMessage.success(res!.data.message)
     } else {
-      ElMessage.error(res.data.message)
+      ElMessage.error(res!.data.message)
     }
   } catch (e: any) {
     ElMessage.error(`同步失败: ${e.message}`)

@@ -90,11 +90,6 @@ export class SaihuClient {
     return this.handleResponse(res.data)
   }
 
-  private async post<T = any>(path: string, data: Record<string, any> = {}): Promise<T> {
-    const res = await this.http.post(path, data)
-    return this.handleResponse(res.data)
-  }
-
   private handleResponse(data: any): any {
     if (data.code === 0 || data.code === 200 || data.success === true) {
       return data.data ?? data.result ?? data
