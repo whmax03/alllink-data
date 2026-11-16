@@ -264,6 +264,9 @@ function goToRegister() {
   margin-top: 28px;
   font-size: 14px;
   color: #64748b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .auth-footer .el-link {

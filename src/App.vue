@@ -14,6 +14,12 @@ const isStandalonePage = computed(() => {
   return route.meta?.public === true
 })
 
+// 右上角默认头像：取用户名首字符（本地渲染，无外链依赖）
+const avatarText = computed(() => {
+  const name = authStore.user?.name?.trim()
+  return name ? name.charAt(0).toUpperCase() : '管'
+})
+
 // 菜单配置
 const menuItems = [
   { path: '/inventory', label: '库存管理', icon: Box },
@@ -187,7 +193,7 @@ const handleChangePassword = () => {
         <div class="header-right">
           <el-dropdown trigger="click">
             <div class="user-profile-dropdown">
-              <el-avatar :size="32" src="https://core-normal.traeapi.us/api/ide/v1/text_to_image?prompt=minimalist%20avatar%20portrait&image_size=square" />
+              <el-avatar :size="32" class="user-avatar-default">{{ avatarText }}</el-avatar>
               <div class="user-meta">
                 <span class="user-name">{{ authStore.user?.name || '管理员' }}</span>
                 <el-icon><ArrowDown /></el-icon>
@@ -455,6 +461,17 @@ body {
   border-radius: 12px;
   cursor: pointer;
   transition: background-color 0.2s;
+}
+
+/* 默认头像：用户名首字 + 品牌渐变（替代原外链生成图） */
+.el-avatar.user-avatar-default {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 15px;
+  letter-spacing: 0;
+  user-select: none;
+  box-shadow: 0 2px 4px -1px rgba(37, 99, 235, 0.3);
 }
 
 .user-profile-dropdown:hover {

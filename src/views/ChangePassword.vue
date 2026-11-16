@@ -308,6 +308,9 @@ function goBack() {
 .auth-footer {
   text-align: center;
   margin-top: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .auth-footer .el-link {
