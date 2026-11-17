@@ -54,7 +54,7 @@ export const syncApi = {
 export const queryApi = {
   dashboard: () =>
     api.get('/query/dashboard'),
-  domesticInventory: (params: { pageSize: number; pageNo: number; sku?: string }) =>
+  domesticInventory: (params: { pageSize: number; pageNo: number; sku?: string; platform?: string }) =>
     api.get('/inventory/domestic', { params }),
   overseasInventory: (params: { pageSize: number; pageNo: number; sku?: string; warehouse_type?: string; platform?: string; country?: string }) =>
     api.get('/inventory/overseas', { params }),

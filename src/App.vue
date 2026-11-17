@@ -162,8 +162,8 @@ const handleChangePassword = () => {
 
       <div class="sidebar-footer">
         <div class="system-status">
-          <div class="status-dot"></div>
-          <span>系统运行正常</span>
+          <!-- <div class="status-dot"></div>
+          <span>系统运行正常</span> -->
         </div>
       </div>
     </aside>

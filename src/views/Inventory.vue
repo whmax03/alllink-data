@@ -19,13 +19,21 @@ const selectedPlatform = ref('')
 const selectedCountry = ref('')
 const selectedWarehouseType = ref('')
 
+// 国内仓平台筛选条件
+const selectedDomesticPlatform = ref('')
+
+// 国内仓平台选项
+const domesticPlatformOptions = [
+  { label: '金蝶', value: '金蝶' },
+  { label: '澳霖', value: '澳霖' },
+]
+
 // 平台选项
 const platformOptions = [
   { label: '亚马逊', value: '亚马逊' },
   { label: 'eBay', value: 'eBay' },
   { label: 'Shopee', value: 'Shopee' },
   { label: 'Tiktok', value: 'Tiktok' },
-  { label: '金蝶', value: '金蝶' },
 ]
 
 // 各平台对应的国家映射
@@ -94,6 +102,10 @@ async function loadInventory() {
 
     let res;
     if (activeTab.value === 'domestic') {
+      // 国内仓：支持平台筛选（金蝶 / 即时库存澳霖汇总）
+      if (selectedDomesticPlatform.value) {
+        params.platform = selectedDomesticPlatform.value
+      }
       res = await queryApi.domesticInventory(params)
     } else {
       // 海外仓：根据平台类型传递不同筛选参数
@@ -176,6 +188,12 @@ watch(activeTab, () => {
   loadInventory()
 })
 
+// 国内仓平台切换时重新加载
+watch(selectedDomesticPlatform, () => {
+  currentPage.value = 1
+  loadInventory()
+})
+
 function getStockColor(qty: number) {
   if (qty <= 0) return 'danger'
   if (qty < 10) return 'warning'
@@ -193,7 +211,7 @@ onMounted(loadInventory)
         <el-icon class="header-icon"><Box /></el-icon>
         <div class="header-text">
           <h1>库存管理控制台</h1>
-          <p>实时掌控全球仓储数据快照</p>
+          <p>实时掌控全球仓储数据</p>
         </div>
       </div>
       <div class="header-right">
@@ -264,23 +282,38 @@ onMounted(loadInventory)
         </div>
 
         <div class="toolbar-right">
-          <!-- 国内仓：仅 SKU 搜索 -->
-          <el-input
-            v-if="activeTab === 'domestic'"
-            v-model="searchSku"
-            placeholder="输入物料编码或名称查询..."
-            class="premium-search"
-            clearable
-            @keyup.enter="handleSearch"
-            @clear="handleSearch"
-          >
-            <template #prefix>
-              <el-icon><Search /></el-icon>
-            </template>
-            <template #append>
-              <el-button @click="handleSearch" type="primary">检索</el-button>
-            </template>
-          </el-input>
+          <!-- 国内仓：平台筛选 + SKU 搜索 -->
+          <div v-if="activeTab === 'domestic'" class="overseas-filters">
+            <el-select
+              v-model="selectedDomesticPlatform"
+              placeholder="选择平台"
+              clearable
+              class="filter-select"
+            >
+              <el-option
+                v-for="opt in domesticPlatformOptions"
+                :key="opt.value"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </el-select>
+
+            <el-input
+              v-model="searchSku"
+              placeholder="输入SKU 编码查询..."
+              class="premium-search"
+              clearable
+              @keyup.enter="handleSearch"
+              @clear="handleSearch"
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+              <template #append>
+                <el-button @click="handleSearch" type="primary">搜索</el-button>
+              </template>
+            </el-input>
+          </div>
 
           <!-- 海外仓：条件筛选 + SKU 搜索 -->
           <div v-else class="overseas-filters">
@@ -352,56 +385,9 @@ onMounted(loadInventory)
 
       <!-- 表格区域 -->
       <div class="table-wrapper-premium">
-        <!-- 国内仓表格 -->
-        <el-table
-          v-if="activeTab === 'domestic'"
-          :data="inventory"
-          v-loading="loading"
-          style="width: 100%"
-          height="calc(100vh - 460px)"
-          row-class-name="premium-table-row"
-          header-cell-class-name="premium-table-header"
-        >
-          <el-table-column label="NO." min-width="70" align="center">
-            <template #default="{ $index }">
-              <span class="index-badge">{{ (currentPage - 1) * pageSize + $index + 1 }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="material_code" label="物料编码" min-width="140">
-            <template #default="{ row }">
-              <code class="code-text">{{ row.material_code || row.original_sku }}</code>
-            </template>
-          </el-table-column>
-          <el-table-column prop="material_name" label="物料名称" min-width="220" show-overflow-tooltip>
-            <template #default="{ row }">
-              {{ row.material_name || row.unified_sku }}
-            </template>
-          </el-table-column>
-          <el-table-column prop="spec_model" label="规格型号" min-width="160" show-overflow-tooltip />
-          <el-table-column prop="plan_tracking_no" label="计划跟踪号" min-width="160" />
-          <el-table-column prop="warehouse_name" label="仓库" min-width="140">
-            <template #default="{ row }">
-              <span class="warehouse-text"><el-icon><Location /></el-icon> {{ row.warehouse_name }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="stock_unit" label="单位" min-width="80" align="center" />
-          <el-table-column label="库存量" min-width="110" align="right">
-            <template #default="{ row }">
-              <span :class="['stock-value', getStockColor(row.stock_qty || row.available_qty)]">
-                {{ row.stock_qty || row.available_qty }}
-              </span>
-            </template>
-          </el-table-column>
-          <el-table-column label="导入时间" min-width="170">
-            <template #default="{ row }">
-              <span class="time-text">{{ row.imported_at ? new Date(row.imported_at).toLocaleString('zh-CN') : (row.snapshot_time ? new Date(row.snapshot_time).toLocaleString('zh-CN') : '-') }}</span>
-            </template>
-          </el-table-column>
-        </el-table>
-
+        
         <!-- 海外仓表格 -->
         <el-table
-          v-else
           :data="inventory"
           v-loading="loading"
           style="width: 100%"
@@ -419,6 +405,11 @@ onMounted(loadInventory)
               <code class="code-text">{{ row.original_sku || row.sku }}</code>
             </template>
           </el-table-column>
+          <el-table-column v-if="activeTab === 'domestic'"  prop="original_sku1" label="计划跟踪号" min-width="150">
+            <template #default="{ row }">
+              <div >{{ row.计划跟踪号 || '-' }}</div>
+            </template>
+          </el-table-column>
           <el-table-column prop="warehouse_name" label="仓库类型" min-width="150">
             <template #default="{ row }">
               <span class="warehouse-text"><el-icon><Ship /></el-icon> {{ row.warehouse.code }}</span>
@@ -430,9 +421,14 @@ onMounted(loadInventory)
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column prop="unified_sku" label="中文品名" min-width="200" show-overflow-tooltip >
+          <el-table-column prop="unified_sku" label="中文品名" min-width="150" show-overflow-tooltip >
             <template #default="{ row }">
               {{ row.unified_sku || row.产品标题 || row.name_cn || '-' }}
+            </template>
+          </el-table-column>
+           <el-table-column prop="unified_sku" label="产品条码" min-width="150" show-overflow-tooltip >
+            <template #default="{ row }">
+              {{ row.产品条码 || row.条码 || '-' }}
             </template>
           </el-table-column>
           <el-table-column label="可用库存" min-width="100" align="right">
@@ -442,7 +438,7 @@ onMounted(loadInventory)
               </span>
             </template>
           </el-table-column>
-          <el-table-column prop="in_transit_qty" label="在途库存" min-width="100" align="right">
+          <!-- <el-table-column prop="in_transit_qty" label="在途库存" min-width="100" align="right">
             <template #default="{ row }">
               <span style="color: #94a3b8">{{ row.in_transit_qty || 0 }}</span>
             </template>
@@ -451,8 +447,8 @@ onMounted(loadInventory)
             <template #default="{ row }">
               <span style="color: #f59e0b">{{ row.reserved_qty || 0 }}</span>
             </template>
-          </el-table-column>
-          <el-table-column prop="stock_unit" label="单位" min-width="80" align="center">
+          </el-table-column> -->
+          <el-table-column prop="stock_unit" label="单位" min-width="120" align="center">
              <template #default="{ row }">
               <span >{{ row.stock_unit || row.产品单位 || row.库存主单位 || '-' }}</span>
             </template>

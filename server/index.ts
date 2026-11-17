@@ -372,6 +372,7 @@ export function createApiRouter(env: Env): Connect.NextHandleFunction {
           const pageNo = Number(url.searchParams.get('pageNo') || '1')
           const pageSize = Number(url.searchParams.get('pageSize') || '10')
           const sku = url.searchParams.get('sku') || undefined
+          const platform = url.searchParams.get('platform') || undefined
           const start = (pageNo - 1) * pageSize
 
           let query = supabase
@@ -383,6 +384,11 @@ export function createApiRouter(env: Env): Connect.NextHandleFunction {
             query = query.or(`unified_sku.ilike.%${sku}%,original_sku.ilike.%${sku}%`)
           }
 
+          // platform 筛选（金蝶 / 即时库存澳霖汇总）
+          if (platform) {
+            query = query.ilike('warehouse_type', `%${platform}%`)
+          }
+
           const { data, error, count } = await query.range(start, start + pageSize - 1)
 
           if (error) return json(res, { code: 500, message: '查询失败: ' + error.message }, 500)
@@ -390,13 +396,16 @@ export function createApiRouter(env: Env): Connect.NextHandleFunction {
           // 计算总库存量
           const totalStock = (data || []).reduce((sum: number, item: any) => sum + (item.available_qty || 0), 0)
 
-          // 查询去重仓库数量（不受分页限制）
+          // 查询去重仓库数量（不受分页限制，应用相同筛选条件）
           let warehouseCountQuery = supabase
             .from('dwd_inventory')
             .select('warehouse_name')
 
           if (sku) {
             warehouseCountQuery = warehouseCountQuery.or(`unified_sku.ilike.%${sku}%,original_sku.ilike.%${sku}%`)
+          }
+          if (platform) {
+            warehouseCountQuery = warehouseCountQuery.ilike('warehouse_type', `%${platform}%`)
           }
 
           const { data: warehouseData } = await warehouseCountQuery
