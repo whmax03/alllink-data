@@ -1,54 +1,127 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue'
 import { queryApi } from '../api'
+import dayjs from 'dayjs'
 import { Box, Ship, Location, Refresh, Search } from '@element-plus/icons-vue'
 
 const loading = ref(false)
 const inventory = ref<any[]>([])
 const activeTab = ref('domestic')
-const overseasSubtype = ref('dropshipping')
 const searchSku = ref('')
 const currentPage = ref(1)
-const pageSize = ref(10)
+const pageSize = ref(20)
 const total = ref(0)
 const totalStockCount = ref(0)
+const warehouseCount = ref(0)
+
+// 海外仓筛选条件
+const selectedPlatform = ref('')
+const selectedCountry = ref('')
+const selectedWarehouseType = ref('')
+
+// 平台选项
+const platformOptions = [
+  { label: '亚马逊', value: '亚马逊' },
+  { label: 'eBay', value: 'eBay' },
+  { label: 'Shopee', value: 'Shopee' },
+  { label: 'Tiktok', value: 'Tiktok' },
+  { label: '金蝶', value: '金蝶' },
+]
+
+// 各平台对应的国家映射
+const countryMap: Record<string, { label: string; value: string }[]> = {
+  'eBay': [
+    { label: '澳大利亚-AU', value: 'AU' },
+    { label: '英国-UK', value: 'UK' },
+  ],
+  'Shopee': [
+    { label: '菲律宾', value: '菲律宾' },
+    { label: '马来西亚', value: '马来西亚' },
+    { label: '泰国', value: '泰国' },
+    { label: '印尼', value: '印度尼西亚' },
+  ],
+  'Tiktok': [
+    { label: '马来西亚', value: '马来西亚' },
+    { label: '泰国', value: '泰国' },
+  ],
+}
+
+// 当前平台对应的国家列表（动态计算）
+const countryOptions = computed(() => {
+  return selectedPlatform.value ? (countryMap[selectedPlatform.value] || []) : []
+})
+
+// 仓库类型选项（主要用于亚马逊平台）
+const warehouseTypeOptions = [
+  { label: '中邮英国', value: '中邮英国' },
+  { label: '中邮德国', value: '中邮德国' },
+  { label: 'VC海外仓德国站', value: 'VC海外仓德国站' },
+  { label: '派速捷德国', value: '派速捷德国' },
+  { label: '字米美国', value: '字米美国' },
+  // { label: 'FBA德国', value: 'FBA德国' },
+  { label: '字米前置转运仓美国', value: '字米前置转运仓美国' },
+]
+
+// 亚马逊平台：使用 warehouse_type 搜索
+const isAmazon = computed(() => selectedPlatform.value === '亚马逊')
+
+// 金蝶平台：独立平台，只有 platform 参数，无 warehouse_type / country
+const isKingdee = computed(() => selectedPlatform.value === '金蝶')
+
+// 是否需要显示仓库类型选择器（仅亚马逊）
+const showWarehouseType = computed(() => isAmazon.value)
+
+// 是否需要显示国家选择器（非亚马逊且非金蝶，且已选平台）
+const showCountry = computed(() => !isAmazon.value && !isKingdee.value && !!selectedPlatform.value)
 
 // 统计数据
 const stats = computed(() => {
   return {
     totalSkus: total.value,
     totalStock: totalStockCount.value,
-    warehouseCount: new Set(inventory.value.map(item => 
-      item.warehouse_name || item.country_warehouse || item.warehouse || item.country
-    )).size
+    warehouseCount: warehouseCount.value
   }
 })
 
 async function loadInventory() {
   loading.value = true
   try {
-    const params = {
+    const params: any = {
       pageSize: pageSize.value,
       pageNo: currentPage.value,
-      sku: searchSku.value || undefined
+      sku: searchSku.value || undefined,
     }
 
     let res;
     if (activeTab.value === 'domestic') {
       res = await queryApi.domesticInventory(params)
     } else {
-      if (overseasSubtype.value === 'dropshipping') {
-        res = await queryApi.overseasInventory(params)
-      } else {
-        res = await queryApi.transitInventory(params)
+      // 海外仓：根据平台类型传递不同筛选参数
+      // 所有平台都传 platform；亚马逊额外支持 warehouse_type；非亚马逊非金蝶额外支持 country
+      if (selectedPlatform.value) {
+        params.platform = selectedPlatform.value
       }
+      if (isAmazon.value && selectedWarehouseType.value) {
+        params.warehouse_type = selectedWarehouseType.value
+      }
+      if (!isAmazon.value && !isKingdee.value && selectedCountry.value) {
+        params.country = selectedCountry.value
+      }
+      res = await queryApi.overseasInventory(params)
     }
 
     const { data } = res
     if (data.code === 200 || data.success) {
       inventory.value = data.data.list || []
+
+      inventory.value.forEach(async item => {
+        Object.assign(item, { ...item.raw_data })
+      })
+
+      console.error('库存数据:', inventory.value)
       total.value = data.data.total || 0
       totalStockCount.value = data.data.totalStock || 0
+      warehouseCount.value = data.data.warehouseCount || 0
     }
   } catch (e) {
     console.error('加载库存失败', e)
@@ -73,12 +146,32 @@ function handleSizeChange(val: number) {
   loadInventory()
 }
 
-watch(activeTab, () => {
+// 平台切换时：亚马逊清除 country 并使用 warehouse_type；金蝶清除两者；其他清除 warehouse_type 并重置 country
+watch(selectedPlatform, (newVal) => {
+  if (newVal === '亚马逊') {
+    selectedCountry.value = ''
+  } else if (newVal === '金蝶') {
+    selectedCountry.value = ''
+    selectedWarehouseType.value = ''
+  } else {
+    selectedWarehouseType.value = ''
+    selectedCountry.value = '' // 不同平台国家列表不同，需重置
+  }
   currentPage.value = 1
   loadInventory()
 })
 
-watch(overseasSubtype, () => {
+watch(selectedCountry, () => {
+  currentPage.value = 1
+  loadInventory()
+})
+
+watch(selectedWarehouseType, () => {
+  currentPage.value = 1
+  loadInventory()
+})
+
+watch(activeTab, () => {
   currentPage.value = 1
   loadInventory()
 })
@@ -168,27 +261,14 @@ onMounted(loadInventory)
               </template>
             </el-tab-pane>
           </el-tabs>
-
-          <transition name="el-fade-in">
-            <div v-if="activeTab === 'overseas'" class="subtype-select-wrapper">
-              <!-- <span class="filter-label">业务类型:</span> -->
-              <el-select
-                v-model="overseasSubtype"
-                placeholder="选择库存类型"
-                class="premium-select"
-                size="default"
-              >
-                <el-option label="字米_一件代发库存" value="dropshipping" />
-                <el-option label="字米_转运库存" value="transit" />
-              </el-select>
-            </div>
-          </transition>
         </div>
 
         <div class="toolbar-right">
+          <!-- 国内仓：仅 SKU 搜索 -->
           <el-input
+            v-if="activeTab === 'domestic'"
             v-model="searchSku"
-            :placeholder="activeTab === 'domestic' ? '输入物料编码或名称查询...' : '输入 SKU 编码查询...'"
+            placeholder="输入物料编码或名称查询..."
             class="premium-search"
             clearable
             @keyup.enter="handleSearch"
@@ -201,17 +281,83 @@ onMounted(loadInventory)
               <el-button @click="handleSearch" type="primary">检索</el-button>
             </template>
           </el-input>
+
+          <!-- 海外仓：条件筛选 + SKU 搜索 -->
+          <div v-else class="overseas-filters">
+            <!-- 平台选择 -->
+            <el-select
+              v-model="selectedPlatform"
+              placeholder="选择平台"
+              clearable
+              class="filter-select"
+            >
+              <el-option
+                v-for="opt in platformOptions"
+                :key="opt.value"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </el-select>
+
+            <!-- 亚马逊平台：显示 warehouse_type 筛选 -->
+            <el-select
+              v-if="showWarehouseType"
+              v-model="selectedWarehouseType"
+              placeholder="选择仓库类型"
+              clearable
+              class="filter-select"
+            >
+              <el-option
+                v-for="opt in warehouseTypeOptions"
+                :key="opt.value"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </el-select>
+
+            <!-- 非亚马逊且非金蝶平台：显示 country 筛选 -->
+            <el-select
+              v-else-if="showCountry"
+              v-model="selectedCountry"
+              placeholder="选择国家"
+              clearable
+              class="filter-select"
+            >
+              <el-option
+                v-for="opt in countryOptions"
+                :key="opt.value"
+                :label="opt.label"
+                :value="opt.value"
+              />
+            </el-select>
+
+            <el-input
+              v-model="searchSku"
+              placeholder="输入 SKU 编码查询..."
+              class="premium-search"
+              clearable
+              @keyup.enter="handleSearch"
+              @clear="handleSearch"
+            >
+              <template #prefix>
+                <el-icon><Search /></el-icon>
+              </template>
+              <template #append>
+                <el-button @click="handleSearch" type="primary">检索</el-button>
+              </template>
+            </el-input>
+          </div>
         </div>
       </div>
 
       <!-- 表格区域 -->
       <div class="table-wrapper-premium">
         <!-- 国内仓表格 -->
-        <el-table 
-          v-if="activeTab === 'domestic'" 
-          :data="inventory" 
-          v-loading="loading" 
-          style="width: 100%" 
+        <el-table
+          v-if="activeTab === 'domestic'"
+          :data="inventory"
+          v-loading="loading"
+          style="width: 100%"
           height="calc(100vh - 460px)"
           row-class-name="premium-table-row"
           header-cell-class-name="premium-table-header"
@@ -223,10 +369,14 @@ onMounted(loadInventory)
           </el-table-column>
           <el-table-column prop="material_code" label="物料编码" min-width="140">
             <template #default="{ row }">
-              <code class="code-text">{{ row.material_code }}</code>
+              <code class="code-text">{{ row.material_code || row.original_sku }}</code>
             </template>
           </el-table-column>
-          <el-table-column prop="material_name" label="物料名称" min-width="220" show-overflow-tooltip />
+          <el-table-column prop="material_name" label="物料名称" min-width="220" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ row.material_name || row.unified_sku }}
+            </template>
+          </el-table-column>
           <el-table-column prop="spec_model" label="规格型号" min-width="160" show-overflow-tooltip />
           <el-table-column prop="plan_tracking_no" label="计划跟踪号" min-width="160" />
           <el-table-column prop="warehouse_name" label="仓库" min-width="140">
@@ -237,24 +387,24 @@ onMounted(loadInventory)
           <el-table-column prop="stock_unit" label="单位" min-width="80" align="center" />
           <el-table-column label="库存量" min-width="110" align="right">
             <template #default="{ row }">
-              <span :class="['stock-value', getStockColor(row.stock_qty)]">
-                {{ row.stock_qty }}
+              <span :class="['stock-value', getStockColor(row.stock_qty || row.available_qty)]">
+                {{ row.stock_qty || row.available_qty }}
               </span>
             </template>
           </el-table-column>
           <el-table-column label="导入时间" min-width="170">
             <template #default="{ row }">
-              <span class="time-text">{{ row.imported_at ? new Date(row.imported_at).toLocaleString('zh-CN') : '-' }}</span>
+              <span class="time-text">{{ row.imported_at ? new Date(row.imported_at).toLocaleString('zh-CN') : (row.snapshot_time ? new Date(row.snapshot_time).toLocaleString('zh-CN') : '-') }}</span>
             </template>
           </el-table-column>
         </el-table>
 
-        <!-- 海外仓 - 一件代发表格 -->
-        <el-table 
-          v-else-if="activeTab === 'overseas' && overseasSubtype === 'dropshipping'" 
-          :data="inventory" 
-          v-loading="loading" 
-          style="width: 100%" 
+        <!-- 海外仓表格 -->
+        <el-table
+          v-else
+          :data="inventory"
+          v-loading="loading"
+          style="width: 100%"
           height="calc(100vh - 460px)"
           row-class-name="premium-table-row"
           header-cell-class-name="premium-table-header"
@@ -264,81 +414,52 @@ onMounted(loadInventory)
               <span class="index-badge">{{ (currentPage - 1) * pageSize + $index + 1 }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="customer" label="客户" min-width="120" />
-          <el-table-column prop="sku" label="SKU 编码" min-width="150">
+          <el-table-column prop="original_sku" label="SKU 编码" min-width="150">
             <template #default="{ row }">
-              <code class="code-text">{{ row.sku }}</code>
+              <code class="code-text">{{ row.original_sku || row.sku }}</code>
             </template>
           </el-table-column>
-          <el-table-column prop="country_warehouse" label="国家仓库" min-width="150">
+          <el-table-column prop="warehouse_name" label="仓库类型" min-width="150">
             <template #default="{ row }">
-              <span class="warehouse-text"><el-icon><Ship /></el-icon> {{ row.country_warehouse }}</span>
+              <span class="warehouse-text"><el-icon><Ship /></el-icon> {{ row.warehouse.code }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="cn_name" label="中文品名" min-width="200" show-overflow-tooltip />
-          <el-table-column prop="en_name" label="英文品名" min-width="200" show-overflow-tooltip />
-          <el-table-column prop="total_stock" label="库存总计" min-width="100" align="right" />
-          <el-table-column label="当前库存" min-width="100" align="right">
+          <el-table-column prop="warehouse_type" label="平台" min-width="120" align="center">
             <template #default="{ row }">
-              <span :class="['stock-value', getStockColor(row.stock)]">
-                {{ row.stock }}
-              </span>
+              <el-tag v-if="row.warehouse.platform" size="small" effect="plain">{{ row.warehouse.platform }}</el-tag>
+              <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column prop="storage_days" label="库龄(天)" min-width="90" align="center">
+          <el-table-column prop="unified_sku" label="中文品名" min-width="200" show-overflow-tooltip >
             <template #default="{ row }">
-              <el-tag :type="row.storage_days > 90 ? 'danger' : 'info'" effect="plain" size="small">
-                {{ row.storage_days }}
-              </el-tag>
+              {{ row.unified_sku || row.产品标题 || row.name_cn || '-' }}
             </template>
           </el-table-column>
-          <el-table-column label="入库时间" min-width="120">
-            <template #default="{ row }">
-              <span class="date-text">{{ row.inbound_date || '-' }}</span>
-            </template>
-          </el-table-column>
-        </el-table>
-
-        <!-- 海外仓 - 转运库存表格 -->
-        <el-table 
-          v-else 
-          :data="inventory" 
-          v-loading="loading" 
-          style="width: 100%" 
-          height="calc(100vh - 460px)"
-          row-class-name="premium-table-row"
-          header-cell-class-name="premium-table-header"
-        >
-          <el-table-column label="NO." min-width="70" align="center">
-            <template #default="{ $index }">
-              <span class="index-badge">{{ (currentPage - 1) * pageSize + $index + 1 }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="customer" label="客户" min-width="120" />
-          <el-table-column prop="sku" label="SKU" min-width="150">
-            <template #default="{ row }">
-              <code class="code-text">{{ row.sku }}</code>
-            </template>
-          </el-table-column>
-          <el-table-column prop="box_mark_no" label="箱唛号" min-width="150" />
-          <el-table-column prop="country" label="国家" min-width="100" align="center" />
-          <el-table-column prop="warehouse" label="仓库" min-width="140">
-            <template #default="{ row }">
-              <span class="warehouse-text"><el-icon><Location /></el-icon> {{ row.warehouse }}</span>
-            </template>
-          </el-table-column>
-          <el-table-column prop="shelf" label="货架" min-width="100" align="center" />
-          <el-table-column prop="stock_qty" label="库存数量" min-width="100" align="right" />
           <el-table-column label="可用库存" min-width="100" align="right">
             <template #default="{ row }">
-              <span :class="['stock-value', getStockColor(row.stock)]">
-                {{ row.stock }}
+              <span :class="['stock-value', getStockColor(row.available_qty)]">
+                {{ row.available_qty }}
               </span>
             </template>
           </el-table-column>
-          <el-table-column prop="frozen" label="冻结" min-width="90" align="right">
+          <el-table-column prop="in_transit_qty" label="在途库存" min-width="100" align="right">
             <template #default="{ row }">
-              <span style="color: #94a3b8">{{ row.frozen }}</span>
+              <span style="color: #94a3b8">{{ row.in_transit_qty || 0 }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="reserved_qty" label="预留库存" min-width="100" align="right">
+            <template #default="{ row }">
+              <span style="color: #f59e0b">{{ row.reserved_qty || 0 }}</span>
+            </template>
+          </el-table-column>
+          <el-table-column prop="stock_unit" label="单位" min-width="80" align="center">
+             <template #default="{ row }">
+              <span >{{ row.stock_unit || row.产品单位 || row.库存主单位 || '-' }}</span>
+            </template>
+            </el-table-column>
+          <el-table-column label="导入时间" min-width="170">
+            <template #default="{ row }">
+              <span class="time-text">{{ row.imported_at ? dayjs(row.imported_at).format('YYYY-MM-DD HH:mm:ss') : '-' }}</span>
             </template>
           </el-table-column>
         </el-table>
@@ -473,12 +594,31 @@ onMounted(loadInventory)
   margin-bottom: 20px;
   padding-bottom: 16px;
   border-bottom: 1px solid #f1f5f9;
+  flex-wrap: wrap;
+  gap: 12px;
 }
 
 .toolbar-left {
   display: flex;
   align-items: center;
   gap: 24px;
+}
+
+.toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.overseas-filters {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.filter-select {
+  width: 160px;
 }
 
 .modern-tabs :deep(.el-tabs__header) {
@@ -497,36 +637,11 @@ onMounted(loadInventory)
   font-weight: 600;
 }
 
-.subtype-select-wrapper {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  background: #f8fafc;
-  padding: 6px 16px;
-  border-radius: 10px;
-}
-
-.filter-label {
-  font-size: 13px;
-  color: #64748b;
-  font-weight: 600;
-}
-
-.premium-select {
-  width: 220px;
-}
-
-.premium-select :deep(.el-input__wrapper) {
-  background: transparent;
-  box-shadow: none !important;
-  font-weight: 500;
-}
-
 .premium-search {
-  width: 320px;
+  width: 280px;
 }
 
-:deep(.premium-select .el-input__wrapper),
+:deep(.filter-select .el-input__wrapper),
 :deep(.premium-search .el-input__wrapper) {
   height: 32px !important;
   box-sizing: border-box;

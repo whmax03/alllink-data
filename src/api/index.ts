@@ -56,10 +56,8 @@ export const queryApi = {
     api.get('/query/dashboard'),
   domesticInventory: (params: { pageSize: number; pageNo: number; sku?: string }) =>
     api.get('/inventory/domestic', { params }),
-  overseasInventory: (params: { pageSize: number; pageNo: number; sku?: string }) =>
+  overseasInventory: (params: { pageSize: number; pageNo: number; sku?: string; warehouse_type?: string; platform?: string; country?: string }) =>
     api.get('/inventory/overseas', { params }),
-  transitInventory: (params: { pageSize: number; pageNo: number; sku?: string }) =>
-    api.get('/inventory/transit/inventory', { params }),
   orders: (params: { page: number; pageSize: number }) =>
     api.get('/query/orders', { params }),
 }

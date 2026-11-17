@@ -363,6 +363,136 @@ export function createApiRouter(env: Env): Connect.NextHandleFunction {
         }
       }
 
+      // ==================== 库存查询接口 ====================
+      if (path.startsWith('/inventory/')) {
+        const supabase = getSupabaseAdmin(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY)
+
+        // 国内仓库存
+        if (path === '/inventory/domestic' && method === 'GET') {
+          const pageNo = Number(url.searchParams.get('pageNo') || '1')
+          const pageSize = Number(url.searchParams.get('pageSize') || '10')
+          const sku = url.searchParams.get('sku') || undefined
+          const start = (pageNo - 1) * pageSize
+
+          let query = supabase
+            .from('dwd_inventory')
+            .select('*', { count: 'exact' })
+            .order('created_at', { ascending: false })
+
+          if (sku) {
+            query = query.or(`unified_sku.ilike.%${sku}%,original_sku.ilike.%${sku}%`)
+          }
+
+          const { data, error, count } = await query.range(start, start + pageSize - 1)
+
+          if (error) return json(res, { code: 500, message: '查询失败: ' + error.message }, 500)
+
+          // 计算总库存量
+          const totalStock = (data || []).reduce((sum: number, item: any) => sum + (item.available_qty || 0), 0)
+
+          // 查询去重仓库数量（不受分页限制）
+          let warehouseCountQuery = supabase
+            .from('dwd_inventory')
+            .select('warehouse_name')
+
+          if (sku) {
+            warehouseCountQuery = warehouseCountQuery.or(`unified_sku.ilike.%${sku}%,original_sku.ilike.%${sku}%`)
+          }
+
+          const { data: warehouseData } = await warehouseCountQuery
+          const warehouseCount = new Set(
+            (warehouseData || []).map((item: any) => item.warehouse_name).filter(Boolean)
+          ).size
+
+          return json(res, {
+            code: 200,
+            success: true,
+            data: {
+              list: data || [],
+              total: count || 0,
+              totalStock,
+              warehouseCount,
+            },
+          })
+        }
+
+        // 海外仓库存
+        if (path === '/inventory/overseas' && method === 'GET') {
+          const pageNo = Number(url.searchParams.get('pageNo') || '1')
+          const pageSize = Number(url.searchParams.get('pageSize') || '10')
+          const sku = url.searchParams.get('sku') || undefined
+          const warehouseType = url.searchParams.get('warehouse_type') || undefined
+          const platform = url.searchParams.get('platform') || undefined
+          const country = url.searchParams.get('country') || undefined
+          const start = (pageNo - 1) * pageSize
+
+          let query = supabase
+            .from('dwd_inventory')
+            .select('*', { count: 'exact' })
+            .order('created_at', { ascending: false })
+
+          // SKU 模糊搜索
+          if (sku) {
+            query = query.or(`unified_sku.ilike.%${sku}%,original_sku.ilike.%${sku}%`)
+          }
+
+          // warehouse_type 筛选（亚马逊平台）
+          if (warehouseType) {
+            query = query.ilike('warehouse_name', `%${warehouseType}%`)
+          }
+
+          // platform 筛选
+          if (platform) {
+            query = query.ilike('warehouse_type', `%${platform}%`)
+          }
+
+          // country 筛选
+          if (country) {
+            query = query.ilike('saihu_warehouse_id', `%${country}%`)
+          }
+
+          const { data, error, count } = await query.range(start, start + pageSize - 1)
+
+          if (error) return json(res, { code: 500, message: '查询失败: ' + error.message }, 500)
+
+          const totalStock = (data || []).reduce((sum: number, item: any) => sum + (item.available_qty || 0), 0)
+
+          // 查询去重仓库数量（不受分页限制，应用相同筛选条件）
+          let warehouseCountQuery = supabase
+            .from('dwd_inventory')
+            .select('warehouse_name')
+
+          if (sku) {
+            warehouseCountQuery = warehouseCountQuery.or(`unified_sku.ilike.%${sku}%,original_sku.ilike.%${sku}%`)
+          }
+          if (warehouseType) {
+            warehouseCountQuery = warehouseCountQuery.ilike('warehouse_name', `%${warehouseType}%`)
+          }
+          if (platform) {
+            warehouseCountQuery = warehouseCountQuery.ilike('warehouse_type', `%${platform}%`)
+          }
+          if (country) {
+            warehouseCountQuery = warehouseCountQuery.ilike('saihu_warehouse_id', `%${country}%`)
+          }
+
+          const { data: warehouseData } = await warehouseCountQuery
+          const warehouseCount = new Set(
+            (warehouseData || []).map((item: any) => item.warehouse_name).filter(Boolean)
+          ).size
+
+          return json(res, {
+            code: 200,
+            success: true,
+            data: {
+              list: data || [],
+              total: count || 0,
+              totalStock,
+              warehouseCount,
+            },
+          })
+        }
+      }
+
       // 没匹配到任何路由
       return json(res, { error: `Not found: ${method} ${path}` }, 404)
     } catch (err: any) {
