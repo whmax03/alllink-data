@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, reactive } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { Lock, DataAnalysis, Message } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 
 const loginFormRef = ref<FormInstance>()
@@ -34,9 +35,11 @@ async function handleLogin() {
     loading.value = true
     try {
       const data = await authStore.login(loginForm.email, loginForm.password)
-      if (data.code === 200 || data.success) {
+      if (data.code === 200) {
         ElMessage.success('登录成功')
-        router.push('/')
+        // 回跳到登录前的页面（401/路由守卫跳转时携带）
+        const redirect = (route.query.redirect as string) || '/'
+        router.push(redirect)
       } else {
         ElMessage.error(data.message || '登录失败')
       }
