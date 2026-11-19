@@ -1,13 +1,21 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { Box, DataAnalysis, Refresh, ArrowDown, Lock } from '@element-plus/icons-vue'
+import { Box, DataAnalysis, Refresh, ArrowDown, Lock, Fold, Expand } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from './stores/auth'
 
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
+
+// 侧边栏折叠状态
+const sidebarCollapsed = ref(localStorage.getItem('ALLINK_SIDEBAR_COLLAPSED') === 'true')
+
+const toggleSidebar = () => {
+  sidebarCollapsed.value = !sidebarCollapsed.value
+  localStorage.setItem('ALLINK_SIDEBAR_COLLAPSED', String(sidebarCollapsed.value))
+}
 
 // 判断当前路由是否为独立页面（不需要侧边栏布局）
 const isStandalonePage = computed(() => {
@@ -136,34 +144,63 @@ const handleChangePassword = () => {
   <!-- 主应用布局 -->
   <div v-else class="app-layout-premium">
     <!-- 侧边栏设计 -->
-    <aside class="sidebar-premium">
+    <aside class="sidebar-premium" :class="{ collapsed: sidebarCollapsed }">
       <div class="brand-section">
-        <div class="brand-logo">
-          <el-icon><DataAnalysis /></el-icon>
-        </div>
-        <div class="brand-info">
-          <div class="brand-name">AllLink Data</div>
-          <div class="brand-version">Enterprise Console</div>
-        </div>
+        <!-- 展开状态：图标 + 文案横向排列 -->
+        <template v-if="!sidebarCollapsed">
+          <div class="brand-logo">
+            <el-icon><DataAnalysis /></el-icon>
+          </div>
+          <div class="brand-info">
+            <div class="brand-name">AllLink Data</div>
+            <div class="brand-version">Enterprise Console</div>
+          </div>
+        </template>
+        <!-- 折叠状态：图标 + 文案上下排列 -->
+        <template v-else>
+          <div class="brand-logo">
+            <el-icon><DataAnalysis /></el-icon>
+          </div>
+          <div class="brand-name-collapsed">AllLink</div>
+        </template>
       </div>
 
       <nav class="nav-menu">
-        <router-link
+        <el-popover
           v-for="item in menuItems"
           :key="item.path"
-          :to="item.path"
-          class="nav-item"
-          active-class="is-active"
+          :width="140"
+          placement="right-start"
+          trigger="hover"
+          :disabled="!sidebarCollapsed"
+          :show-after="150"
+          :hide-after="100"
+          popper-class="sidebar-collapsed-popper"
         >
-          <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
-          <span class="nav-label">{{ item.label }}</span>
-        </router-link>
+          <template #reference>
+            <router-link
+              :to="item.path"
+              class="nav-item"
+              active-class="is-active"
+            >
+              <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
+              <span v-show="!sidebarCollapsed" class="nav-label">{{ item.label }}</span>
+            </router-link>
+          </template>
+          <div
+            class="collapsed-submenu-item"
+            @click="router.push(item.path)"
+          >
+            <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
+            <span>{{ item.label }}</span>
+          </div>
+        </el-popover>
       </nav>
 
       <div class="sidebar-footer">
-        <div class="system-status">
-          <!-- <div class="status-dot"></div>
-          <span>系统运行正常</span> -->
+        <div class="collapse-btn" @click="toggleSidebar">
+          <el-icon><component :is="sidebarCollapsed ? Expand : Fold" /></el-icon>
+          <span v-show="!sidebarCollapsed" class="collapse-label">收起菜单</span>
         </div>
       </div>
     </aside>
@@ -249,6 +286,38 @@ body {
   flex-direction: column;
   box-shadow: 4px 0 10px rgba(0, 0, 0, 0.1);
   z-index: 200;
+  transition: width 0.28s ease;
+}
+
+.sidebar-premium.collapsed {
+  width: 64px;
+}
+
+.sidebar-premium.collapsed .brand-section {
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 8px;
+  padding: 24px 0 20px;
+}
+
+.brand-name-collapsed {
+  font-size: 11px;
+  font-weight: 700;
+  color: #cbd5e1;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  line-height: 1;
+}
+
+.sidebar-premium.collapsed .nav-item {
+  width: 40px;
+  height: 40px;
+  justify-content: center;
+  align-items: center;
+  padding: 0;
+  margin: 0 auto 4px;
+  box-sizing: border-box;
 }
 
 .brand-section {
@@ -289,6 +358,10 @@ body {
   padding: 0 16px;
 }
 
+.sidebar-premium.collapsed .nav-menu {
+  padding: 0;
+}
+
 .nav-item {
   display: flex;
   align-items: center;
@@ -322,24 +395,40 @@ body {
 }
 
 .sidebar-footer {
-  padding: 24px;
+  padding: 16px;
   border-top: 1px solid rgba(255, 255, 255, 0.05);
 }
 
-.system-status {
+.collapse-btn {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
+  gap: 12px;
+  padding: 10px 16px;
   color: #94a3b8;
+  border-radius: 10px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  transition: all 0.2s;
 }
 
-.status-dot {
-  width: 8px;
-  height: 8px;
-  background-color: #10b981;
-  border-radius: 50%;
-  box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2);
+.sidebar-premium.collapsed .collapse-btn {
+  justify-content: center;
+  padding: 10px 0;
+}
+
+.collapse-btn:hover {
+  background-color: rgba(255, 255, 255, 0.08);
+  color: white;
+}
+
+.collapse-btn .el-icon {
+  font-size: 18px;
+  flex-shrink: 0;
+}
+
+.collapse-label {
+  white-space: nowrap;
 }
 
 /* 主内容区容器 */
@@ -522,5 +611,34 @@ body {
 .fade-slide-leave-to {
   opacity: 0;
   transform: translateY(-10px);
+}
+
+/* 侧边栏折叠时弹出菜单样式（渲染在 body 下，需全局样式） */
+.sidebar-collapsed-popper.el-popover.el-popper {
+  padding: 6px !important;
+  border-radius: 10px !important;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15) !important;
+}
+
+.collapsed-submenu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  color: #334155;
+  transition: all 0.15s;
+}
+
+.collapsed-submenu-item:hover {
+  background-color: #eff6ff;
+  color: #3b82f6;
+}
+
+.collapsed-submenu-item .el-icon {
+  font-size: 16px;
 }
 </style>
