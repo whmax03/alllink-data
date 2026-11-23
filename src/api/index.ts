@@ -2,6 +2,7 @@ import axios from 'axios'
 import { ElMessage } from 'element-plus'
 import router from '../router'
 import { useAuthStore } from '../stores/auth'
+import { i18n } from '../i18n'
 
 /** 前端 API 请求封装 */
 const api = axios.create({
@@ -32,7 +33,7 @@ function handleUnauthorized(error: any) {
   const code = data?.code as number | undefined
   const message =
     data?.message ||
-    (code === 10001 ? '未登录，请先登录' : '登录已过期，请重新登录')
+    (code === 10001 ? i18n.t('auth401.notLogin') : i18n.t('auth401.expired'))
 
   // 清除本地登录态（store 与 localStorage 同步清理）
   useAuthStore().clearAuth()

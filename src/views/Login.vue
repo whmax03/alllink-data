@@ -1,13 +1,17 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { Lock, DataAnalysis, Message } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
+import { i18n } from '../i18n'
+import LangSwitch from '../components/LangSwitch.vue'
 
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
+
+const t = i18n.t
 
 const loginFormRef = ref<FormInstance>()
 const loading = ref(false)
@@ -17,16 +21,17 @@ const loginForm = reactive({
   password: '',
 })
 
-const rules: FormRules = {
+// 校验规则文案走 i18n，语言切换后即时生效
+const rules = computed<FormRules>(() => ({
   email: [
-    { required: true, message: '请输入邮箱', trigger: 'blur' },
-    { type: 'email', message: '请输入正确的邮箱格式', trigger: 'blur' },
+    { required: true, message: t('login.emailRequired'), trigger: 'blur' },
+    { type: 'email', message: t('login.emailInvalid'), trigger: 'blur' },
   ],
   password: [
-    { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 6, max: 32, message: '密码长度 6-32 个字符', trigger: 'blur' },
+    { required: true, message: t('login.passwordRequired'), trigger: 'blur' },
+    { min: 6, max: 32, message: t('login.passwordRange'), trigger: 'blur' },
   ],
-}
+}))
 
 async function handleLogin() {
   if (!loginFormRef.value) return
@@ -36,15 +41,15 @@ async function handleLogin() {
     try {
       const data = await authStore.login(loginForm.email, loginForm.password)
       if (data.code === 200) {
-        ElMessage.success('登录成功')
+        ElMessage.success(t('login.success'))
         // 回跳到登录前的页面（401/路由守卫跳转时携带）
         const redirect = (route.query.redirect as string) || '/'
         router.push(redirect)
       } else {
-        ElMessage.error(data.message || '登录失败')
+        ElMessage.error(data.message || t('login.failed'))
       }
     } catch (e: any) {
-      ElMessage.error(e.response?.data?.message || '登录失败，请稍后重试')
+      ElMessage.error(e.response?.data?.message || t('login.retry'))
     } finally {
       loading.value = false
     }
@@ -58,6 +63,11 @@ function goToRegister() {
 
 <template>
   <div class="auth-page">
+    <!-- 中英文切换：右上角固定 -->
+    <div class="auth-lang-switch">
+      <LangSwitch variant="dark" />
+    </div>
+
     <div class="auth-bg-decoration">
       <div class="bg-circle circle-1"></div>
       <div class="bg-circle circle-2"></div>
@@ -75,8 +85,8 @@ function goToRegister() {
         </div>
       </div>
 
-      <h2 class="auth-title">欢迎回来</h2>
-      <p class="auth-desc">请输入您的账户信息以登录系统</p>
+      <h2 class="auth-title">{{ t('login.welcome') }}</h2>
+      <p class="auth-desc">{{ t('login.desc') }}</p>
 
       <el-form
         ref="loginFormRef"
@@ -89,7 +99,7 @@ function goToRegister() {
         <el-form-item prop="email">
           <el-input
             v-model="loginForm.email"
-            placeholder="请输入邮箱"
+            :placeholder="t('login.emailPlaceholder')"
             :prefix-icon="Message"
             clearable
           />
@@ -99,7 +109,7 @@ function goToRegister() {
           <el-input
             v-model="loginForm.password"
             type="password"
-            placeholder="请输入密码"
+            :placeholder="t('login.passwordPlaceholder')"
             :prefix-icon="Lock"
             show-password
             clearable
@@ -112,13 +122,13 @@ function goToRegister() {
           :loading="loading"
           @click="handleLogin"
         >
-          登 录
+          {{ t('login.submit') }}
         </el-button>
       </el-form>
 
       <div class="auth-footer">
-        <span>还没有账号？</span>
-        <el-link type="primary" :underline="false" @click="goToRegister">立即注册</el-link>
+        <span>{{ t('login.noAccount') }}</span>
+        <el-link type="primary" :underline="false" @click="goToRegister">{{ t('login.registerNow') }}</el-link>
       </div>
     </div>
   </div>
@@ -133,6 +143,14 @@ function goToRegister() {
   background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
   position: relative;
   overflow: hidden;
+}
+
+/* 语言切换按钮：固定右上角 */
+.auth-lang-switch {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  z-index: 10;
 }
 
 .auth-bg-decoration {

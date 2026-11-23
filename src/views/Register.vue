@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { Lock, Message, DataAnalysis, User } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
+import { i18n } from '../i18n'
+import LangSwitch from '../components/LangSwitch.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const t = i18n.t
 
 const registerFormRef = ref<FormInstance>()
 const loading = ref(false)
@@ -20,31 +23,32 @@ const registerForm = reactive({
 
 const validateConfirmPassword = (_rule: any, value: string, callback: any) => {
   if (value === '') {
-    callback(new Error('请再次输入密码'))
+    callback(new Error(t('register.confirmRequired')))
   } else if (value !== registerForm.password) {
-    callback(new Error('两次输入的密码不一致'))
+    callback(new Error(t('register.confirmMismatch')))
   } else {
     callback()
   }
 }
 
-const rules: FormRules = {
+// 校验规则文案走 i18n，语言切换后即时生效
+const rules = computed<FormRules>(() => ({
   name: [
-    { required: true, message: '请输入姓名', trigger: 'blur' },
-    { min: 2, max: 20, message: '姓名长度 2-20 个字符', trigger: 'blur' },
+    { required: true, message: t('register.nameRequired'), trigger: 'blur' },
+    { min: 2, max: 20, message: t('register.nameRange'), trigger: 'blur' },
   ],
   email: [
-    { required: true, message: '请输入邮箱', trigger: 'blur' },
-    { type: 'email', message: '请输入正确的邮箱格式', trigger: 'blur' },
+    { required: true, message: t('register.emailRequired'), trigger: 'blur' },
+    { type: 'email', message: t('register.emailInvalid'), trigger: 'blur' },
   ],
   password: [
-    { required: true, message: '请输入密码', trigger: 'blur' },
-    { min: 6, max: 32, message: '密码长度 6-32 个字符', trigger: 'blur' },
+    { required: true, message: t('register.passwordRequired'), trigger: 'blur' },
+    { min: 6, max: 32, message: t('register.passwordRange'), trigger: 'blur' },
   ],
   confirmPassword: [
     { required: true, validator: validateConfirmPassword, trigger: 'blur' },
   ],
-}
+}))
 
 async function handleRegister() {
   if (!registerFormRef.value) return
@@ -58,13 +62,13 @@ async function handleRegister() {
         registerForm.password
       )
       if (data.code === 200 || data.success) {
-        ElMessage.success('注册成功，请登录')
+        ElMessage.success(t('register.success'))
         router.push('/login')
       } else {
-        ElMessage.error(data.message || '注册失败')
+        ElMessage.error(data.message || t('register.failed'))
       }
     } catch (e: any) {
-      ElMessage.error(e.response?.data?.message || '注册失败，请稍后重试')
+      ElMessage.error(e.response?.data?.message || t('register.retry'))
     } finally {
       loading.value = false
     }
@@ -78,6 +82,11 @@ function goToLogin() {
 
 <template>
   <div class="auth-page">
+    <!-- 中英文切换：右上角固定 -->
+    <div class="auth-lang-switch">
+      <LangSwitch variant="dark" />
+    </div>
+
     <div class="auth-bg-decoration">
       <div class="bg-circle circle-1"></div>
       <div class="bg-circle circle-2"></div>
@@ -95,8 +104,8 @@ function goToLogin() {
         </div>
       </div>
 
-      <h2 class="auth-title">创建账户</h2>
-      <p class="auth-desc">填写以下信息以注册新账户</p>
+      <h2 class="auth-title">{{ t('register.title') }}</h2>
+      <p class="auth-desc">{{ t('register.desc') }}</p>
 
       <el-form
         ref="registerFormRef"
@@ -109,7 +118,7 @@ function goToLogin() {
         <el-form-item prop="name">
           <el-input
             v-model="registerForm.name"
-            placeholder="请输入姓名"
+            :placeholder="t('register.namePlaceholder')"
             :prefix-icon="User"
             clearable
           />
@@ -118,7 +127,7 @@ function goToLogin() {
         <el-form-item prop="email">
           <el-input
             v-model="registerForm.email"
-            placeholder="请输入邮箱"
+            :placeholder="t('register.emailPlaceholder')"
             :prefix-icon="Message"
             clearable
           />
@@ -128,7 +137,7 @@ function goToLogin() {
           <el-input
             v-model="registerForm.password"
             type="password"
-            placeholder="请输入密码"
+            :placeholder="t('register.passwordPlaceholder')"
             :prefix-icon="Lock"
             show-password
             clearable
@@ -139,7 +148,7 @@ function goToLogin() {
           <el-input
             v-model="registerForm.confirmPassword"
             type="password"
-            placeholder="请再次输入密码"
+            :placeholder="t('register.confirmPlaceholder')"
             :prefix-icon="Lock"
             show-password
             clearable
@@ -152,13 +161,13 @@ function goToLogin() {
           :loading="loading"
           @click="handleRegister"
         >
-          注 册
+          {{ t('register.submit') }}
         </el-button>
       </el-form>
 
       <div class="auth-footer">
-        <span>已有账户？</span>
-        <el-link type="primary" :underline="false" @click="goToLogin">返回登录</el-link>
+        <span>{{ t('register.hasAccount') }}</span>
+        <el-link type="primary" :underline="false" @click="goToLogin">{{ t('register.backToLogin') }}</el-link>
       </div>
     </div>
   </div>
@@ -173,6 +182,14 @@ function goToLogin() {
   background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
   position: relative;
   overflow: hidden;
+}
+
+/* 语言切换按钮：固定右上角 */
+.auth-lang-switch {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  z-index: 10;
 }
 
 .auth-bg-decoration {

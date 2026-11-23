@@ -1,12 +1,15 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, computed } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, type FormInstance, type FormRules } from 'element-plus'
 import { Lock, DataAnalysis, ArrowLeft, Message } from '@element-plus/icons-vue'
 import { useAuthStore } from '../stores/auth'
+import { i18n } from '../i18n'
+import LangSwitch from '../components/LangSwitch.vue'
 
 const router = useRouter()
 const authStore = useAuthStore()
+const t = i18n.t
 
 const pwdFormRef = ref<FormInstance>()
 const loading = ref(false)
@@ -20,30 +23,31 @@ const pwdForm = reactive({
 
 const validateConfirmPassword = (_rule: any, value: string, callback: any) => {
   if (value === '') {
-    callback(new Error('请再次输入新密码'))
+    callback(new Error(t('changePwd.confirmRequired')))
   } else if (value !== pwdForm.newPassword) {
-    callback(new Error('两次输入的密码不一致'))
+    callback(new Error(t('changePwd.confirmMismatch')))
   } else {
     callback()
   }
 }
 
-const rules: FormRules = {
+// 校验规则文案走 i18n，语言切换后即时生效
+const rules = computed<FormRules>(() => ({
   email: [
-    { required: true, message: '请输入邮箱', trigger: 'blur' },
-    { type: 'email', message: '请输入正确的邮箱格式', trigger: 'blur' },
+    { required: true, message: t('changePwd.emailRequired'), trigger: 'blur' },
+    { type: 'email', message: t('changePwd.emailInvalid'), trigger: 'blur' },
   ],
   oldPassword: [
-    { required: true, message: '请输入当前密码', trigger: 'blur' },
+    { required: true, message: t('changePwd.currentRequired'), trigger: 'blur' },
   ],
   newPassword: [
-    { required: true, message: '请输入新密码', trigger: 'blur' },
-    { min: 6, max: 32, message: '密码长度 6-32 个字符', trigger: 'blur' },
+    { required: true, message: t('changePwd.newRequired'), trigger: 'blur' },
+    { min: 6, max: 32, message: t('changePwd.newRange'), trigger: 'blur' },
   ],
   confirmPassword: [
     { required: true, validator: validateConfirmPassword, trigger: 'blur' },
   ],
-}
+}))
 
 async function handleChangePassword() {
   if (!pwdFormRef.value) return
@@ -57,14 +61,14 @@ async function handleChangePassword() {
         pwdForm.newPassword
       )
       if (data.code === 200 || data.success) {
-        ElMessage.success('密码修改成功，请重新登录')
+        ElMessage.success(t('changePwd.success'))
         authStore.logout()
         router.push('/login')
       } else {
-        ElMessage.error(data.message || '密码修改失败')
+        ElMessage.error(data.message || t('changePwd.failed'))
       }
     } catch (e: any) {
-      ElMessage.error(e.response?.data?.message || '密码修改失败，请稍后重试')
+      ElMessage.error(e.response?.data?.message || t('changePwd.retry'))
     } finally {
       loading.value = false
     }
@@ -78,6 +82,11 @@ function goBack() {
 
 <template>
   <div class="auth-page">
+    <!-- 中英文切换：右上角固定 -->
+    <div class="auth-lang-switch">
+      <LangSwitch variant="dark" />
+    </div>
+
     <div class="auth-bg-decoration">
       <div class="bg-circle circle-1"></div>
       <div class="bg-circle circle-2"></div>
@@ -95,8 +104,8 @@ function goBack() {
         </div>
       </div>
 
-      <h2 class="auth-title">修改密码</h2>
-      <p class="auth-desc">为了账户安全，请定期更换密码</p>
+      <h2 class="auth-title">{{ t('changePwd.title') }}</h2>
+      <p class="auth-desc">{{ t('changePwd.desc') }}</p>
 
       <el-form
         ref="pwdFormRef"
@@ -109,7 +118,7 @@ function goBack() {
         <el-form-item prop="email">
           <el-input
             v-model="pwdForm.email"
-            placeholder="请输入邮箱"
+            :placeholder="t('changePwd.emailPlaceholder')"
             :prefix-icon="Message"
             clearable
           />
@@ -119,7 +128,7 @@ function goBack() {
           <el-input
             v-model="pwdForm.oldPassword"
             type="password"
-            placeholder="请输入当前密码"
+            :placeholder="t('changePwd.currentPlaceholder')"
             :prefix-icon="Lock"
             show-password
             clearable
@@ -130,7 +139,7 @@ function goBack() {
           <el-input
             v-model="pwdForm.newPassword"
             type="password"
-            placeholder="请输入新密码"
+            :placeholder="t('changePwd.newPlaceholder')"
             :prefix-icon="Lock"
             show-password
             clearable
@@ -141,7 +150,7 @@ function goBack() {
           <el-input
             v-model="pwdForm.confirmPassword"
             type="password"
-            placeholder="请再次输入新密码"
+            :placeholder="t('changePwd.confirmPlaceholder')"
             :prefix-icon="Lock"
             show-password
             clearable
@@ -154,13 +163,13 @@ function goBack() {
           :loading="loading"
           @click="handleChangePassword"
         >
-          确认修改
+          {{ t('changePwd.submit') }}
         </el-button>
       </el-form>
 
       <div class="auth-footer">
         <el-link type="primary" :underline="false" :icon="ArrowLeft" @click="goBack">
-          返回
+          {{ t('changePwd.back') }}
         </el-link>
       </div>
     </div>
@@ -176,6 +185,14 @@ function goBack() {
   background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
   position: relative;
   overflow: hidden;
+}
+
+/* 语言切换按钮：固定右上角 */
+.auth-lang-switch {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+  z-index: 10;
 }
 
 .auth-bg-decoration {

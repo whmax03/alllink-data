@@ -1,24 +1,25 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
+import { i18n } from '../i18n'
 
 const routes = [
   {
     path: '/login',
     name: 'Login',
     component: () => import('../views/Login.vue'),
-    meta: { title: '登录', public: true },
+    meta: { titleKey: 'auth.loginTitle', public: true },
   },
   {
     path: '/register',
     name: 'Register',
     component: () => import('../views/Register.vue'),
-    meta: { title: '注册', public: true },
+    meta: { titleKey: 'auth.registerTitle', public: true },
   },
   {
     path: '/change-password',
     name: 'ChangePassword',
     component: () => import('../views/ChangePassword.vue'),
-    meta: { title: '修改密码', public: true },
+    meta: { titleKey: 'auth.changePasswordTitle', public: true },
   },
   {
     path: '/',
@@ -28,25 +29,25 @@ const routes = [
     path: '/dashboard',
     name: 'Dashboard',
     component: () => import('../views/Dashboard.vue'),
-    meta: { title: '数据看板' },
+    meta: { titleKey: 'nav.dashboard' },
   },
   {
     path: '/orders',
     name: 'Orders',
     component: () => import('../views/Orders.vue'),
-    meta: { title: '订单列表' },
+    meta: { titleKey: 'nav.orders' },
   },
   {
     path: '/inventory',
     name: 'Inventory',
     component: () => import('../views/Inventory.vue'),
-    meta: { title: '库存查看' },
+    meta: { titleKey: 'nav.inventory' },
   },
   {
     path: '/sync',
     name: 'Sync',
     component: () => import('../views/Sync.vue'),
-    meta: { title: '数据同步' },
+    meta: { titleKey: 'nav.sync' },
   },
 ]
 
@@ -69,5 +70,14 @@ router.beforeEach((to, _from, next) => {
     next()
   }
 })
+
+// 页面标题随路由与语言同步（带 AllLink Data 后缀）
+// 注：语言切换时标题更新由 App.vue 中的 locale watcher 触发，路由切换时由 afterEach 触发
+function syncDocumentTitle() {
+  const key = (router.currentRoute.value.meta?.titleKey as string) || ''
+  document.title = key ? `${i18n.t(key)} · AllLink Data` : 'AllLink Data'
+}
+
+router.afterEach(() => syncDocumentTitle())
 
 export default router

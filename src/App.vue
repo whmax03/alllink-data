@@ -4,10 +4,17 @@ import { useRouter, useRoute } from 'vue-router'
 import { Box, DataAnalysis, Refresh, ArrowDown, Lock, Fold, Expand } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from './stores/auth'
+import { i18n } from './i18n'
+import LangSwitch from './components/LangSwitch.vue'
+import zhLocale from 'element-plus/es/locale/lang/zh-cn'
+import enLocale from 'element-plus/es/locale/lang/en'
 
 const router = useRouter()
 const route = useRoute()
 const authStore = useAuthStore()
+
+// Element Plus 内置组件文案随语言切换（分页器/日历等）
+const elLocale = computed(() => (i18n.locale === 'zh' ? zhLocale : enLocale))
 
 // 侧边栏折叠状态
 const sidebarCollapsed = ref(localStorage.getItem('ALLINK_SIDEBAR_COLLAPSED') === 'true')
@@ -25,18 +32,18 @@ const isStandalonePage = computed(() => {
 // 右上角默认头像：取用户名首字符（本地渲染，无外链依赖）
 const avatarText = computed(() => {
   const name = authStore.user?.name?.trim()
-  return name ? name.charAt(0).toUpperCase() : '管'
+  return name ? name.charAt(0).toUpperCase() : i18n.t('app.avatarFallback')
 })
 
-// 菜单配置
+// 菜单配置（label 经 titleKey 走 i18n，语言切换即时生效）
 const menuItems = [
-  { path: '/inventory', label: '库存管理', icon: Box },
-  // { path: '/dashboard', label: '数据看板', icon: DataAnalysis },
+  { path: '/inventory', titleKey: 'nav.inventory', icon: Box },
+  // { path: '/dashboard', titleKey: 'nav.dashboard', icon: DataAnalysis },
 ]
 
-// Tab 标签页管理
+// Tab 标签页管理（title 存 i18n key，渲染时翻译，切换语言后已存 Tab 同步生效）
 interface TabItem {
-  title: string
+  titleKey: string
   name: string
   path: string
 }
@@ -44,11 +51,33 @@ interface TabItem {
 const tabs = ref<TabItem[]>([])
 const activeTab = ref('')
 
+// 旧 localStorage 数据兼容：无 titleKey 时按 path 推断
+const pathToTitleKey = (path: string): string => {
+  const map: Record<string, string> = {
+    '/inventory': 'nav.inventory',
+    '/dashboard': 'nav.dashboard',
+    '/orders': 'nav.orders',
+    '/sync': 'nav.sync',
+  }
+  return map[path] || 'nav.newTab'
+}
+
 // 从本地存储恢复 Tab
 const initTabs = () => {
   const savedTabs = localStorage.getItem('ALLINK_TABS')
   if (savedTabs) {
-    tabs.value = JSON.parse(savedTabs)
+    try {
+      const parsed = JSON.parse(savedTabs) as Array<Partial<TabItem>>
+      tabs.value = parsed
+        .filter(item => item && item.path)
+        .map(item => ({
+          titleKey: item.titleKey || pathToTitleKey(item.path as string),
+          name: (item.name as string) || (item.path as string),
+          path: item.path as string,
+        }))
+    } catch {
+      tabs.value = []
+    }
   }
 }
 
@@ -59,18 +88,18 @@ const saveTabs = () => {
 
 // 添加 Tab
 const addTab = (toRoute: any) => {
-  const { path, meta, name } = toRoute
+  const { path, meta } = toRoute
   // 排除根路径或重定向路径
   if (path === '/') return
   // 排除独立页面（登录/注册/修改密码），不加入 Tab
   if (meta?.public) return
 
-  const title = (meta?.title as string) || (menuItems.find(item => item.path === path)?.label) || (name as string) || '新标签页'
+  const titleKey = (meta?.titleKey as string) || pathToTitleKey(path)
   
   const existingTab = tabs.value.find(tab => tab.path === path)
   if (!existingTab) {
     tabs.value.push({
-      title,
+      titleKey,
       name: path,
       path
     })
@@ -85,7 +114,7 @@ const removeTab = (targetName: string) => {
   let activeName = activeTab.value
   
   if (tabsList.length <= 1) {
-    ElMessage.warning('至少保留一个标签页')
+    ElMessage.warning(i18n.t('tabs.keepAtLeastOne'))
     return
   }
 
@@ -127,7 +156,7 @@ watch(() => route.path, () => {
 // 退出登录
 const handleLogout = () => {
   authStore.logout()
-  ElMessage.success('已安全退出登录')
+  ElMessage.success(i18n.t('menu.logoutSuccess'))
   router.push('/login')
 }
 
@@ -135,11 +164,19 @@ const handleLogout = () => {
 const handleChangePassword = () => {
   router.push('/change-password')
 }
+
+// 语言切换时同步浏览器标签标题（路由切换场景由 router.afterEach 处理）
+watch(() => i18n.locale, () => {
+  const key = (route.meta?.titleKey as string) || ''
+  document.title = key ? `${i18n.t(key)} · AllLink Data` : 'AllLink Data'
+})
 </script>
 
 <template>
-  <!-- 独立页面：登录/注册/修改密码 -->
-  <router-view v-if="isStandalonePage" />
+  <!-- Element Plus 内置文案随语言切换 -->
+  <el-config-provider :locale="elLocale">
+    <!-- 独立页面：登录/注册/修改密码 -->
+    <router-view v-if="isStandalonePage" />
 
   <!-- 主应用布局 -->
   <div v-else class="app-layout-premium">
@@ -184,7 +221,7 @@ const handleChangePassword = () => {
               active-class="is-active"
             >
               <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
-              <span v-show="!sidebarCollapsed" class="nav-label">{{ item.label }}</span>
+              <span v-show="!sidebarCollapsed" class="nav-label">{{ i18n.t(item.titleKey) }}</span>
             </router-link>
           </template>
           <div
@@ -192,7 +229,7 @@ const handleChangePassword = () => {
             @click="router.push(item.path)"
           >
             <el-icon class="nav-icon"><component :is="item.icon" /></el-icon>
-            <span>{{ item.label }}</span>
+            <span>{{ i18n.t(item.titleKey) }}</span>
           </div>
         </el-popover>
       </nav>
@@ -200,7 +237,7 @@ const handleChangePassword = () => {
       <div class="sidebar-footer">
         <div class="collapse-btn" @click="toggleSidebar">
           <el-icon><component :is="sidebarCollapsed ? Expand : Fold" /></el-icon>
-          <span v-show="!sidebarCollapsed" class="collapse-label">收起菜单</span>
+          <span v-show="!sidebarCollapsed" class="collapse-label">{{ i18n.t('menu.collapse') }}</span>
         </div>
       </div>
     </aside>
@@ -221,18 +258,20 @@ const handleChangePassword = () => {
             <el-tab-pane
               v-for="item in tabs"
               :key="item.name"
-              :label="item.title"
+              :label="i18n.t(item.titleKey)"
               :name="item.name"
             />
           </el-tabs>
         </div>
 
         <div class="header-right">
+          <!-- 中英文切换：位于头像左侧 -->
+          <LangSwitch variant="light" class="header-lang-switch" />
           <el-dropdown trigger="click">
             <div class="user-profile-dropdown">
               <el-avatar :size="32" class="user-avatar-default">{{ avatarText }}</el-avatar>
               <div class="user-meta">
-                <span class="user-name">{{ authStore.user?.name || '管理员' }}</span>
+                <span class="user-name">{{ authStore.user?.name || i18n.t('app.defaultUserName') }}</span>
                 <el-icon><ArrowDown /></el-icon>
               </div>
             </div>
@@ -240,9 +279,9 @@ const handleChangePassword = () => {
               <el-dropdown-menu class="premium-dropdown-menu">
                 <!-- <el-dropdown-item :icon="User">个人中心</el-dropdown-item>
                 <el-dropdown-item :icon="Setting">系统设置</el-dropdown-item> -->
-                <el-dropdown-item :icon="Lock" @click="handleChangePassword">修改密码</el-dropdown-item>
+                <el-dropdown-item :icon="Lock" @click="handleChangePassword">{{ i18n.t('menu.changePassword') }}</el-dropdown-item>
                 <el-dropdown-item divided :icon="Refresh" @click="handleLogout" class="logout-item">
-                  退出登录
+                  {{ i18n.t('menu.logout') }}
                 </el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -260,6 +299,7 @@ const handleChangePassword = () => {
       </main>
     </div>
   </div>
+  </el-config-provider>
 </template>
 
 <style>
@@ -540,6 +580,11 @@ body {
 .header-right {
   display: flex;
   align-items: center;
+  gap: 12px;
+}
+
+.header-lang-switch {
+  flex-shrink: 0;
 }
 
 .user-profile-dropdown {

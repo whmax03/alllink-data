@@ -2,7 +2,11 @@
 import { ref, onMounted, watch, computed } from 'vue'
 import { queryApi } from '../api'
 import dayjs from 'dayjs'
-import { Box, Ship, Location, Refresh, Search } from '@element-plus/icons-vue'
+import { Box, Ship, Location, Refresh, Search, CopyDocument } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
+import { i18n } from '../i18n'
+
+const t = i18n.t
 
 const loading = ref(false)
 const inventory = ref<any[]>([])
@@ -11,6 +15,7 @@ const searchSku = ref('')
 const currentPage = ref(1)
 const pageSize = ref(20)
 const total = ref(0)
+const totalSkus = ref(0)
 const totalStockCount = ref(0)
 const warehouseCount = ref(0)
 
@@ -85,7 +90,7 @@ const showCountry = computed(() => !isAmazon.value && !isKingdee.value && !!sele
 // 统计数据
 const stats = computed(() => {
   return {
-    totalSkus: total.value,
+    totalSkus: totalSkus.value,
     totalStock: totalStockCount.value,
     warehouseCount: warehouseCount.value
   }
@@ -131,12 +136,14 @@ async function loadInventory() {
       })
 
       console.error('库存数据:', inventory.value)
+      totalSkus.value = data.data.totalSkuNum || 0
       total.value = data.data.total || 0
       totalStockCount.value = data.data.totalStock || 0
       warehouseCount.value = data.data.warehouseCount || 0
     }
   } catch (e) {
     console.error('加载库存失败', e)
+    ElMessage.error(t('inventory.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -200,6 +207,32 @@ function getStockColor(qty: number) {
   return 'success'
 }
 
+/** 复制 SKU 编码到剪贴板（带非安全上下文降级兼容） */
+async function copySku(sku?: string) {
+  if (!sku) {
+    ElMessage.warning(t('inventory.noSkuToCopy'))
+    return
+  }
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(sku)
+    } else {
+      // 兼容降级：非安全上下文（如 http 局域网访问）时用临时 textarea 复制
+      const textarea = document.createElement('textarea')
+      textarea.value = sku
+      textarea.style.position = 'fixed'
+      textarea.style.opacity = '0'
+      document.body.appendChild(textarea)
+      textarea.select()
+      document.execCommand('copy')
+      document.body.removeChild(textarea)
+    }
+    ElMessage.success(`${t('inventory.copiedPrefix')}${sku}`)
+  } catch {
+    ElMessage.error(t('inventory.copyFailed'))
+  }
+}
+
 onMounted(loadInventory)
 </script>
 
@@ -210,13 +243,13 @@ onMounted(loadInventory)
       <div class="header-left">
         <el-icon class="header-icon"><Box /></el-icon>
         <div class="header-text">
-          <h1>库存管理控制台</h1>
-          <p>实时掌控全球仓储数据</p>
+          <h1>{{ t('inventory.title') }}</h1>
+          <p>{{ t('inventory.subtitle') }}</p>
         </div>
       </div>
       <div class="header-right">
         <el-button type="primary" :icon="Refresh" @click="loadInventory" :loading="loading" plain round>
-          刷新数据
+          {{ t('inventory.refresh') }}
         </el-button>
       </div>
     </div>
@@ -229,8 +262,8 @@ onMounted(loadInventory)
             <el-icon><Box /></el-icon>
           </div>
           <div class="stat-info">
-            <span class="stat-label">SKU 总数</span>
-            <span class="stat-value">{{ total.toLocaleString() }}</span>
+            <span class="stat-label">{{ t('inventory.totalSkus') }}</span>
+            <span class="stat-value">{{ totalSkus.toLocaleString() }}</span>
           </div>
         </div>
       </el-col>
@@ -240,7 +273,7 @@ onMounted(loadInventory)
             <el-icon><Location /></el-icon>
           </div>
           <div class="stat-info">
-            <span class="stat-label">覆盖仓库</span>
+            <span class="stat-label">{{ t('inventory.warehouseCount') }}</span>
             <span class="stat-value">{{ stats.warehouseCount }}</span>
           </div>
         </div>
@@ -251,7 +284,7 @@ onMounted(loadInventory)
             <el-icon><Ship /></el-icon>
           </div>
           <div class="stat-info">
-            <span class="stat-label">库存总量</span>
+            <span class="stat-label">{{ t('inventory.totalStock') }}</span>
             <span class="stat-value">{{ stats.totalStock.toLocaleString() }}</span>
           </div>
         </div>
@@ -267,14 +300,14 @@ onMounted(loadInventory)
             <el-tab-pane name="domestic">
               <template #label>
                 <span class="tab-label">
-                  <el-icon><Location /></el-icon> 国内仓
+                  <el-icon><Location /></el-icon> {{ t('inventory.domestic') }}
                 </span>
               </template>
             </el-tab-pane>
             <el-tab-pane name="overseas">
               <template #label>
                 <span class="tab-label">
-                  <el-icon><Ship /></el-icon> 海外仓
+                  <el-icon><Ship /></el-icon> {{ t('inventory.overseas') }}
                 </span>
               </template>
             </el-tab-pane>
@@ -286,7 +319,7 @@ onMounted(loadInventory)
           <div v-if="activeTab === 'domestic'" class="overseas-filters">
             <el-select
               v-model="selectedDomesticPlatform"
-              placeholder="选择平台"
+              :placeholder="t('inventory.selectPlatform')"
               clearable
               class="filter-select"
             >
@@ -300,7 +333,7 @@ onMounted(loadInventory)
 
             <el-input
               v-model="searchSku"
-              placeholder="输入SKU 编码查询..."
+              :placeholder="t('inventory.searchPlaceholder')"
               class="premium-search"
               clearable
               @keyup.enter="handleSearch"
@@ -310,7 +343,7 @@ onMounted(loadInventory)
                 <el-icon><Search /></el-icon>
               </template>
               <template #append>
-                <el-button @click="handleSearch" type="primary">搜索</el-button>
+                <el-button @click="handleSearch" type="primary">{{ t('inventory.searchBtn') }}</el-button>
               </template>
             </el-input>
           </div>
@@ -320,7 +353,7 @@ onMounted(loadInventory)
             <!-- 平台选择 -->
             <el-select
               v-model="selectedPlatform"
-              placeholder="选择平台"
+              :placeholder="t('inventory.selectPlatform')"
               clearable
               class="filter-select"
             >
@@ -336,7 +369,7 @@ onMounted(loadInventory)
             <el-select
               v-if="showWarehouseType"
               v-model="selectedWarehouseType"
-              placeholder="选择仓库类型"
+              :placeholder="t('inventory.warehouseType')"
               clearable
               class="filter-select"
             >
@@ -366,7 +399,7 @@ onMounted(loadInventory)
 
             <el-input
               v-model="searchSku"
-              placeholder="输入 SKU 编码查询..."
+              :placeholder="t('inventory.searchPlaceholder')"
               class="premium-search"
               clearable
               @keyup.enter="handleSearch"
@@ -376,7 +409,7 @@ onMounted(loadInventory)
                 <el-icon><Search /></el-icon>
               </template>
               <template #append>
-                <el-button @click="handleSearch" type="primary">检索</el-button>
+                <el-button @click="handleSearch" type="primary">{{ t('inventory.retrieveBtn') }}</el-button>
               </template>
             </el-input>
           </div>
@@ -400,38 +433,43 @@ onMounted(loadInventory)
               <span class="index-badge">{{ (currentPage - 1) * pageSize + $index + 1 }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="original_sku" label="SKU 编码" min-width="150">
+          <el-table-column prop="original_sku" :label="t('inventory.skuCode')" min-width="150">
             <template #default="{ row }">
-              <code class="code-text">{{ row.original_sku || row.sku }}</code>
+              <div class="sku-cell" :title="row.original_sku || row.sku">
+                <code class="code-text">{{ row.original_sku || row.sku }}</code>
+                <el-icon class="copy-icon" :title="t('inventory.copy')" @click="copySku(row.original_sku || row.sku)">
+                  <CopyDocument />
+                </el-icon>
+              </div>
             </template>
           </el-table-column>
-          <el-table-column v-if="activeTab === 'domestic'"  prop="original_sku1" label="计划跟踪号" min-width="150">
+          <el-table-column v-if="activeTab === 'domestic'"  prop="original_sku1" :label="t('inventory.trackingNo')" min-width="150">
             <template #default="{ row }">
               <div >{{ row.计划跟踪号 || '-' }}</div>
             </template>
           </el-table-column>
-          <el-table-column prop="warehouse_name" label="仓库类型" min-width="150">
+          <el-table-column prop="warehouse_name" :label="t('inventory.warehouseType')" min-width="150">
             <template #default="{ row }">
               <span class="warehouse-text"><el-icon><Ship /></el-icon> {{ row.warehouse.code }}</span>
             </template>
           </el-table-column>
-          <el-table-column prop="warehouse_type" label="平台" min-width="120" align="center">
+          <el-table-column prop="warehouse_type" :label="t('inventory.platform')" min-width="120" align="center">
             <template #default="{ row }">
               <el-tag v-if="row.warehouse.platform" size="small" effect="plain">{{ row.warehouse.platform }}</el-tag>
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column prop="unified_sku" label="中文品名" min-width="150" show-overflow-tooltip >
+          <el-table-column prop="unified_sku" :label="t('inventory.productName')" min-width="150" show-overflow-tooltip >
             <template #default="{ row }">
               {{ row.unified_sku || row.产品标题 || row.name_cn || '-' }}
             </template>
           </el-table-column>
-           <el-table-column prop="unified_sku" label="产品条码" min-width="150" show-overflow-tooltip >
+           <el-table-column prop="unified_sku" :label="t('inventory.barcode')" min-width="150" show-overflow-tooltip >
             <template #default="{ row }">
               {{ row.产品条码 || row.条码 || '-' }}
             </template>
           </el-table-column>
-          <el-table-column label="可用库存" min-width="100" align="right">
+          <el-table-column :label="t('inventory.available')" min-width="100" align="right">
             <template #default="{ row }">
               <span :class="['stock-value', getStockColor(row.available_qty)]">
                 {{ row.available_qty }}
@@ -448,12 +486,12 @@ onMounted(loadInventory)
               <span style="color: #f59e0b">{{ row.reserved_qty || 0 }}</span>
             </template>
           </el-table-column> -->
-          <el-table-column prop="stock_unit" label="单位" min-width="120" align="center">
+          <el-table-column prop="stock_unit" :label="t('inventory.unit')" min-width="120" align="center">
              <template #default="{ row }">
               <span >{{ row.stock_unit || row.产品单位 || row.库存主单位 || '-' }}</span>
             </template>
             </el-table-column>
-          <el-table-column label="导入时间" min-width="170">
+          <el-table-column :label="t('inventory.importedAt')" min-width="170">
             <template #default="{ row }">
               <span class="time-text">{{ row.imported_at ? dayjs(row.imported_at).format('YYYY-MM-DD HH:mm:ss') : '-' }}</span>
             </template>
@@ -698,6 +736,33 @@ onMounted(loadInventory)
   border-radius: 4px;
   color: #334155;
   font-size: 13px;
+  word-break: break-word;
+}
+
+/* SKU 复制按钮：悬停单元格时浮现 */
+.sku-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.copy-icon {
+  cursor: pointer;
+  color: #94a3b8;
+  font-size: 14px;
+  flex-shrink: 0;
+  /* opacity: 0; */
+  transition: opacity 0.2s, color 0.2s, transform 0.2s;
+}
+
+.sku-cell:hover .copy-icon {
+  opacity: 1;
+}
+
+.copy-icon:hover {
+  color: #3b82f6;
+  transform: scale(1.15);
 }
 
 .warehouse-text {
