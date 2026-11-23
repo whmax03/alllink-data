@@ -82,6 +82,33 @@ export const authApi = {
     api.post('/auth/change-password', data),
 }
 
+/** 账号管理 API（admin 专用，后端有 admin 守卫） */
+export const userApi = {
+  list: (params?: { pageNo?: number; pageSize?: number; keyword?: string }) =>
+    api.get('/users/', { params }),
+  create: (data: { name: string; email: string; password: string }) =>
+    api.post('/users/', data),
+  remove: (userId: number) =>
+    api.delete(`/users/${userId}`),
+  resetPassword: (userId: number, newPassword: string) =>
+    api.put(`/users/${userId}/password`, { new_password: newPassword }),
+}
+
+/** 当前用户角色/权限（旧缓存登录态补 roles 兜底）+ 权限管理页（admin） */
+export const rbacApi = {
+  myPermissions: () =>
+    api.get('/rbac/me/permissions'),
+  /** 角色列表（含各自权限码） */
+  roles: () =>
+    api.get('/rbac/roles'),
+  /** 权限列表（可按 type 过滤：page/tab/platform/data） */
+  permissions: (params?: { perm_type?: string }) =>
+    api.get('/rbac/permissions', { params }),
+  /** 给角色覆盖式分配权限 */
+  assignPermissions: (data: { role_code: string; permission_codes: string[] }) =>
+    api.put('/rbac/roles/permissions', data),
+}
+
 /** 同步相关 API */
 export const syncApi = {
   orders: (params?: { startTime?: string; endTime?: string }) =>

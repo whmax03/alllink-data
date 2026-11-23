@@ -143,7 +143,7 @@ async function loadInventory() {
     }
   } catch (e) {
     console.error('加载库存失败', e)
-    ElMessage.error(t('inventory.loadFailed'))
+    // ElMessage.error(t('inventory.loadFailed'))
   } finally {
     loading.value = false
   }
@@ -244,7 +244,6 @@ onMounted(loadInventory)
         <el-icon class="header-icon"><Box /></el-icon>
         <div class="header-text">
           <h1>{{ t('inventory.title') }}</h1>
-          <p>{{ t('inventory.subtitle') }}</p>
         </div>
       </div>
       <div class="header-right">

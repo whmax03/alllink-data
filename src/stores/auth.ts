@@ -1,11 +1,13 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
-import { authApi } from '../api'
+import { authApi, rbacApi } from '../api'
 
 export interface UserInfo {
   id: number | string
   name: string
   email: string
+  /** 角色编码列表（登录接口返回；旧缓存缺失时由 ensureRoles 兜底拉取） */
+  roles?: string[]
 }
 
 export const useAuthStore = defineStore('auth', () => {
@@ -22,6 +24,7 @@ export const useAuthStore = defineStore('auth', () => {
   )
 
   const isLoggedIn = computed(() => !!token.value)
+  const isAdmin = computed(() => (user.value?.roles || []).includes('admin'))
 
   function setAuth(t: string, u: UserInfo) {
     token.value = t
@@ -63,15 +66,34 @@ export const useAuthStore = defineStore('auth', () => {
     clearAuth()
   }
 
+  /**
+   * 兼容旧缓存登录态：user 无 roles 时调用 /rbac/me/permissions 补齐。
+   * 幂等（roles 已存在直接返回）；失败静默，下次登录会带回。
+   */
+  async function ensureRoles() {
+    if (!token.value || user.value?.roles) return
+    try {
+      const { data } = await rbacApi.myPermissions()
+      if (data.code === 200 && data.data?.roles && user.value) {
+        user.value = { ...user.value, roles: data.data.roles }
+        localStorage.setItem('ALLLINK_USER', JSON.stringify(user.value))
+      }
+    } catch {
+      /* 静默失败，不影响主流程 */
+    }
+  }
+
   return {
     token,
     user,
     isLoggedIn,
+    isAdmin,
     setAuth,
     clearAuth,
     login,
     register,
     changePassword,
     logout,
+    ensureRoles,
   }
 })
