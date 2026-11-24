@@ -94,19 +94,37 @@ export const userApi = {
     api.put(`/users/${userId}/password`, { new_password: newPassword }),
 }
 
-/** 当前用户角色/权限（旧缓存登录态补 roles 兜底）+ 权限管理页（admin） */
+/** 当前用户角色/权限（旧缓存登录态补 roles 兜底）+ 角色/权限管理页（admin） */
 export const rbacApi = {
   myPermissions: () =>
     api.get('/rbac/me/permissions'),
-  /** 角色列表（含各自权限码） */
-  roles: () =>
-    api.get('/rbac/roles'),
+  /** 角色列表（含各自权限码，分页；pageSize 大时等同全量） */
+  roles: (params?: { pageNo?: number; pageSize?: number; keyword?: string }) =>
+    api.get('/rbac/roles', { params }),
+  /** 新建角色 */
+  createRole: (data: { name: string; code: string; description?: string }) =>
+    api.post('/rbac/roles', data),
+  /** 更新角色（名称/简称/描述；admin 角色后端禁止修改） */
+  updateRole: (roleId: number, data: { name: string; code: string; description?: string }) =>
+    api.put(`/rbac/roles/${roleId}`, data),
+  /** 删除角色（admin 角色后端禁止删除） */
+  removeRole: (roleId: number) =>
+    api.delete(`/rbac/roles/${roleId}`),
   /** 权限列表（可按 type 过滤：page/tab/platform/data） */
   permissions: (params?: { perm_type?: string }) =>
     api.get('/rbac/permissions', { params }),
-  /** 给角色覆盖式分配权限 */
+  /** 给角色覆盖式分配权限（admin 角色后端拒绝） */
   assignPermissions: (data: { role_code: string; permission_codes: string[] }) =>
     api.put('/rbac/roles/permissions', data),
+  /** 查询角色权限详情（权限管理页详情面板：角色信息 + 权限明细含 type） */
+  rolePermissionDetail: (roleId: number) =>
+    api.get(`/rbac/roles/${roleId}/permissions`),
+  /** 查询角色绑定的账号列表（角色管理页点击绑定账号数弹窗） */
+  roleUsers: (roleId: number) =>
+    api.get(`/rbac/roles/${roleId}/users`),
+  /** 给账号覆盖式分配角色（账号管理页） */
+  assignUserRoles: (data: { user_id: number; role_codes: string[] }) =>
+    api.put('/rbac/users/roles', data),
 }
 
 /** 同步相关 API */

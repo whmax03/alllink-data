@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, reactive, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { User, UserFilled, Search, Plus, Lock, Delete } from '@element-plus/icons-vue'
-import { userApi } from '../api'
+import { UserFilled, Search, Plus, Lock, Delete, Avatar } from '@element-plus/icons-vue'
+import { userApi, rbacApi } from '../api'
 import { useAuthStore } from '../stores/auth'
 import { i18n } from '../i18n'
 
@@ -202,6 +202,65 @@ function roleLabel(code: string): string {
   return code
 }
 
+// ---------- 分配角色对话框 ----------
+const roleDialogVisible = ref(false)
+const roleLoading = ref(false)
+const roleTarget = ref<any>(null)
+// 全部可分配角色列表（id/name/code/description）
+const roleOptions = ref<any[]>([])
+// 勾选的角色编码集合
+const checkedRoleCodes = ref<string[]>([])
+
+async function openRoleDialog(row: any) {
+  roleTarget.value = row
+  checkedRoleCodes.value = [...(row.roles || [])]
+  roleDialogVisible.value = true
+  // 懒加载角色列表（首次打开拉取，后续复用；拉全量供勾选）
+  if (!roleOptions.value.length) {
+    try {
+      const { data } = await rbacApi.roles({ pageNo: 1, pageSize: 100 })
+      if (data.code === 200) {
+        // 不提供 admin 角色的分配入口：列表中排除（已有 admin 的账号提交时后端保留，不会误摘）
+        roleOptions.value = (data.data?.list || []).filter((r: any) => r.code !== 'admin')
+      }
+    } catch (e: any) {
+      ElMessage.error(e.response?.data?.message || t('roles.loadFailed'))
+    }
+  }
+}
+
+async function handleAssignRoles() {
+  if (!roleTarget.value) return
+  roleLoading.value = true
+  try {
+    // 覆盖式分配：勾选的角色码全量提交。
+    // admin 不在可勾选列表中：目标账号原本已有 admin 角色时静默保留（防止覆盖式保存误摘/自降权锁死系统）
+    const targetHadAdmin = (roleTarget.value.roles || []).includes('admin')
+    const submitCodes = targetHadAdmin
+      ? [...new Set([...checkedRoleCodes.value.filter(c => c !== 'admin'), 'admin'])]
+      : checkedRoleCodes.value.filter(c => c !== 'admin')
+    const { data } = await rbacApi.assignUserRoles({
+      user_id: roleTarget.value.id,
+      role_codes: submitCodes,
+    })
+    if (data.code === 200) {
+      ElMessage.success(t('users.assignRoleSuccess'))
+      roleDialogVisible.value = false
+      // 若改的是当前登录账号：同步刷新本地登录态（roles/permissions + 菜单/Tab 权限即时生效）
+      if (roleTarget.value.id === authStore.user?.id) {
+        await authStore.refreshLoginState()
+      }
+      await loadAccounts()
+    } else {
+      ElMessage.error(data.message || t('users.loadFailed'))
+    }
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.message || t('users.loadFailed'))
+  } finally {
+    roleLoading.value = false
+  }
+}
+
 onMounted(loadAccounts)
 </script>
 
@@ -216,48 +275,18 @@ onMounted(loadAccounts)
         </div>
       </div>
       <div class="header-right">
-        <el-button type="primary" :icon="Plus" @click="openCreateDialog" plain round>
+        <el-button
+          v-if="authStore.hasPerm('action:users:create')"
+          type="primary"
+          :icon="Plus"
+          @click="openCreateDialog"
+          plain
+          round
+        >
           {{ t('users.addAccount') }}
         </el-button>
       </div>
     </div>
-
-    <!-- 数据概览卡片 -->
-    <el-row :gutter="20" class="stats-row">
-      <el-col :span="8">
-        <div class="stat-card">
-          <div class="stat-icon-wrapper blue">
-            <el-icon><UserFilled /></el-icon>
-          </div>
-          <div class="stat-info">
-            <span class="stat-label">{{ t('users.totalAccounts') }}</span>
-            <span class="stat-value">{{ stats.total }}</span>
-          </div>
-        </div>
-      </el-col>
-      <el-col :span="8">
-        <div class="stat-card">
-          <div class="stat-icon-wrapper orange">
-            <el-icon><Lock /></el-icon>
-          </div>
-          <div class="stat-info">
-            <span class="stat-label">{{ t('users.adminCount') }}</span>
-            <span class="stat-value">{{ stats.admins }}</span>
-          </div>
-        </div>
-      </el-col>
-      <el-col :span="8">
-        <div class="stat-card">
-          <div class="stat-icon-wrapper green">
-            <el-icon><User /></el-icon>
-          </div>
-          <div class="stat-info">
-            <span class="stat-label">{{ t('users.memberCount') }}</span>
-            <span class="stat-value">{{ stats.members }}</span>
-          </div>
-        </div>
-      </el-col>
-    </el-row>
 
     <!-- 主体内容卡片 -->
     <el-card class="main-content-card" shadow="never">
@@ -340,9 +369,21 @@ onMounted(loadAccounts)
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column :label="t('users.actions')" min-width="200" align="center" fixed="right">
+          <el-table-column :label="t('users.actions')" min-width="280" align="center" fixed="right">
             <template #default="{ row }">
               <el-button
+                size="small"
+                :icon="Avatar"
+                type="primary"
+                plain
+                round
+                 :disabled="(row.roles || []).includes('admin')"
+                @click="openRoleDialog(row)"
+              >
+                {{ t('users.assignRole') }}
+              </el-button>
+              <el-button
+                v-if="authStore.hasPerm('action:users:reset_password')"
                 size="small"
                 :icon="Lock"
                 plain
@@ -351,8 +392,9 @@ onMounted(loadAccounts)
               >
                 {{ t('users.resetPassword') }}
               </el-button>
-              <!-- admin 角色账号禁止删除：不渲染删除按钮（后端亦无此限制，前端为唯一拦截层之一，另有后端禁删当前账号守卫） -->
+              <!-- admin 角色账号禁止删除：不渲染删除按钮（后端亦有禁删 admin 守卫） -->
               <el-button
+                v-if="authStore.hasPerm('action:users:delete')"
                 size="small"
                 :icon="Delete"
                 type="danger"
@@ -454,6 +496,38 @@ onMounted(loadAccounts)
         <el-button round @click="resetDialogVisible = false">{{ t('users.resetDialog.cancel') }}</el-button>
         <el-button type="primary" round :loading="resetLoading" @click="handleReset">
           {{ t('users.resetDialog.submit') }}
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 分配角色对话框 -->
+    <el-dialog
+      v-model="roleDialogVisible"
+      :title="t('users.assignRoleDialog.title')"
+      width="440px"
+      destroy-on-close
+    >
+      <div class="reset-targetBox">
+        <p class="reset-target">
+          {{ roleTarget?.name }} · {{ roleTarget?.email }}
+        </p>
+        <p class="reset-desc">{{ t('users.assignRoleDialog.desc') }}</p>
+        <el-checkbox-group v-model="checkedRoleCodes" class="role-checkbox-group">
+          <div v-for="role in roleOptions" :key="role.code" class="role-option">
+            <el-checkbox
+              :value="role.code"
+            >
+              <span class="role-option-name">{{ role.name }}</span>
+              <span class="role-option-code">{{ role.code }}</span>
+            </el-checkbox>
+            <p v-if="role.description" class="role-option-desc">{{ role.description }}</p>
+          </div>
+        </el-checkbox-group>
+      </div>
+      <template #footer>
+        <el-button round @click="roleDialogVisible = false">{{ t('users.assignRoleDialog.cancel') }}</el-button>
+        <el-button type="primary" round :loading="roleLoading" @click="handleAssignRoles">
+          {{ t('users.assignRoleDialog.submit') }}
         </el-button>
       </template>
     </el-dialog>
@@ -683,7 +757,10 @@ onMounted(loadAccounts)
 .dialog-form {
   padding: 0 8px;
 }
-
+.reset-targetBox {
+  max-height: 500px;
+  overflow-y: auto;
+}
 .reset-target {
   margin: 0 0 4px;
   font-size: 15px;
@@ -695,6 +772,44 @@ onMounted(loadAccounts)
   margin: 0 0 16px;
   font-size: 13px;
   color: #64748b;
+}
+
+/* 分配角色对话框：角色选项卡片 */
+.role-checkbox-group {
+  display: block;
+  width: 100%;
+}
+
+.role-option {
+  border: 1px solid #e2e8f0;
+  border-radius: 10px;
+  padding: 0 12px 10px;
+  margin-bottom: 8px;
+  transition: border-color 0.2s, background-color 0.2s;
+}
+
+.role-option:hover {
+  border-color: #93c5fd;
+  background-color: #f8fafc;
+}
+
+.role-option-name {
+  font-weight: 600;
+  color: #334155;
+  font-size: 14px;
+}
+
+.role-option-code {
+  margin-left: 8px;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  color: #94a3b8;
+}
+
+.role-option-desc {
+  margin: 4px 0 4px 24px;
+  font-size: 12px;
+  color: #94a3b8;
 }
 
 /* 分页 */

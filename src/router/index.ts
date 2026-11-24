@@ -41,7 +41,7 @@ const routes = [
     path: '/inventory',
     name: 'Inventory',
     component: () => import('../views/Inventory.vue'),
-    meta: { titleKey: 'nav.inventory' },
+    meta: { titleKey: 'nav.inventory', perm: 'page:inventory' },
   },
   {
     path: '/sync',
@@ -53,13 +53,19 @@ const routes = [
     path: '/users',
     name: 'Users',
     component: () => import('../views/Users.vue'),
-    meta: { titleKey: 'nav.users', requiresAdmin: true },
+    meta: { titleKey: 'nav.users', requiresAdmin: true, perm: 'page:users' },
   },
   {
     path: '/permissions',
     name: 'Permissions',
     component: () => import('../views/Permissions.vue'),
-    meta: { titleKey: 'nav.permissions', requiresAdmin: true },
+    meta: { titleKey: 'nav.permissions', requiresAdmin: true, perm: 'page:rbac' },
+  },
+  {
+    path: '/roles',
+    name: 'Roles',
+    component: () => import('../views/Roles.vue'),
+    meta: { titleKey: 'nav.roles', requiresAdmin: true },
   },
 ]
 
@@ -68,7 +74,7 @@ const router = createRouter({
   routes,
 })
 
-// 全局前置守卫：未登录跳登录页；admin 页面校验角色（旧缓存登录态先补齐 roles）
+// 全局前置守卫：未登录跳登录页；admin 页面校验角色；带 perm 的页面按权限码校验
 // 权限不足时的跳转带上 deniedTab 标记，App.vue 读取后会自动关闭该无权限残留 Tab
 router.beforeEach(async (to, _from, next) => {
   const authStore = useAuthStore()
@@ -80,10 +86,24 @@ router.beforeEach(async (to, _from, next) => {
     // 已登录时不允许访问登录/注册页，跳转首页
     next('/')
   } else if (to.meta?.requiresAdmin) {
-    // 旧缓存登录态可能缺 roles，先幂等补齐再判断
+    // 旧缓存登录态可能缺 roles/permissions，先幂等补齐再判断
     await authStore.ensureRoles()
+    await authStore.ensurePermissions()
     if (!authStore.isAdmin) {
       next({ path: '/inventory', query: { deniedTab: '1' } })
+    } else {
+      next()
+    }
+  } else if (to.meta?.perm) {
+    // 页面权限码校验（旧缓存缺 permissions 先补齐）
+    await authStore.ensurePermissions()
+    if (!authStore.hasPerm(to.meta.perm as string)) {
+      // 目标即库存页时放行兜底：避免弹回 /inventory 造成导航自环白屏（后端接口层仍是安全边界）
+      if (to.path === '/inventory') {
+        next()
+      } else {
+        next({ path: '/inventory', query: { deniedTab: '1' } })
+      }
     } else {
       next()
     }

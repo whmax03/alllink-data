@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, watch, onMounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
-import { Box, DataAnalysis, Refresh, ArrowDown, Lock, Fold, Expand, User, Setting, Key, ArrowRight } from '@element-plus/icons-vue'
+import { Box, DataAnalysis, Refresh, ArrowDown, Lock, Fold, Expand, User, Setting, Key, ArrowRight, Avatar } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from './stores/auth'
 import { i18n } from './i18n'
@@ -29,28 +29,42 @@ const isStandalonePage = computed(() => {
   return route.meta?.public === true
 })
 
-// ---------- Tab 权限自动清理 ----------
-// admin 页面的 path 集合：当前用户非 admin 时，这些 Tab 不应存在（自动移除，免手动关闭）
-const ADMIN_TAB_PATHS = ['/users', '/permissions']
+  // ---------- Tab 权限自动清理 ----------
+  // admin 页面的 path 集合：当前用户非 admin 时，这些 Tab 不应存在（自动移除，免手动关闭）
+  const ADMIN_TAB_PATHS = ['/users', '/permissions', '/roles']
 
-/**
- * 按当前角色过滤 Tab：
- * - 非 admin：移除所有 admin 专属 Tab（账号管理）
- * - 未登录：清空全部
- * 并持久化；若当前激活 Tab 被移除，自动切到幸存 Tab（优先库存页）
- */
-function enforceTabPermissions(): boolean {
-  if (!authStore.isLoggedIn) {
-    // 未登录：Tab 数据全清，重新登录后从默认页重建
-    if (tabs.value.length > 0) {
-      tabs.value = []
-      saveTabs()
-    }
-    return false
+  // 带 meta.perm 的 Tab 路径 → 权限码映射（与 router/index.ts 的 meta.perm 保持一致）
+  const PERM_TAB_PATHS: Record<string, string> = {
+    '/inventory': 'page:inventory',
+    '/users': 'page:users',
+    '/permissions': 'page:rbac',
   }
-  if (!authStore.isAdmin) {
+
+  /**
+   * 按当前登录态过滤 Tab：
+   * - 非 admin：移除所有 admin 专属 Tab（账号/角色/权限管理）
+   * - 权限码缺失：移除对应无权限 Tab（admin 恒真不受影响）
+   * - 未登录：清空全部
+   * 并持久化；若当前激活 Tab 被移除，自动切到幸存 Tab（优先库存页）
+   */
+  function enforceTabPermissions(): boolean {
+    if (!authStore.isLoggedIn) {
+      // 未登录：Tab 数据全清，重新登录后从默认页重建
+      if (tabs.value.length > 0) {
+        tabs.value = []
+        saveTabs()
+      }
+      return false
+    }
     const before = tabs.value.length
-    tabs.value = tabs.value.filter(tab => !ADMIN_TAB_PATHS.includes(tab.path))
+    tabs.value = tabs.value.filter(tab => {
+      // admin 专属页：非 admin 一律移除（路由守卫 requiresAdmin 拦截）
+      if (ADMIN_TAB_PATHS.includes(tab.path)) return authStore.isAdmin
+      // 权限码控制页：无权限移除（admin 恒全量）
+      const perm = PERM_TAB_PATHS[tab.path]
+      if (perm && !authStore.hasPerm(perm)) return false
+      return true
+    })
     if (tabs.value.length !== before) {
       saveTabs()
       // 当前激活 Tab 被清理时，切到首个幸存 Tab（否则库存页）
@@ -62,9 +76,8 @@ function enforceTabPermissions(): boolean {
       }
       return true
     }
+    return false
   }
-  return false
-}
 
 // 右上角默认头像：取用户名首字符（本地渲染，无外链依赖）
 const avatarText = computed(() => {
@@ -74,29 +87,36 @@ const avatarText = computed(() => {
 
 // 菜单配置（titleKey 走 i18n；基础管理组仅对 admin 显示，置顶）
 // 支持两级结构：children 存在时为「基础管理」组菜单，子项为账号/权限管理
+// perm 字段与路由 meta.perm 一致：单项/子项按权限码显隐（admin 恒全量）
 interface MenuItem {
   path: string
   titleKey: string
   icon: any
+  perm?: string
   children?: MenuItem[]
 }
 
 const menuItems = computed<MenuItem[]>(() => {
-  const items: MenuItem[] = [
-    { path: '/inventory', titleKey: 'nav.inventory', icon: Box },
-    // { path: '/dashboard', titleKey: 'nav.dashboard', icon: DataAnalysis },
-  ]
+  const items: MenuItem[] = []
+  if (authStore.hasPerm('page:inventory')) {
+    items.push({ path: '/inventory', titleKey: 'nav.inventory', icon: Box, perm: 'page:inventory' })
+  }
   if (authStore.isAdmin) {
-    // 基础管理（admin 专属，置顶）：账号管理 + 权限管理子菜单
-    items.unshift({
-      path: '/basic',
-      titleKey: 'nav.basic',
-      icon: Setting,
-      children: [
-        { path: '/users', titleKey: 'nav.users', icon: User },
-        { path: '/permissions', titleKey: 'nav.permissions', icon: Key },
-      ],
-    })
+    // 基础管理（admin 专属，置顶）：账号管理 + 角色管理 + 权限管理子菜单
+    // 子项再按权限码过滤（admin 恒真全显示；预留未来非 admin 授 page 权限场景），全无权限时整组隐藏
+    const adminChildren = ([
+      { path: '/users', titleKey: 'nav.users', icon: User, perm: 'page:users' },
+      { path: '/roles', titleKey: 'nav.roles', icon: Avatar },
+      { path: '/permissions', titleKey: 'nav.permissions', icon: Key, perm: 'page:rbac' },
+    ] as MenuItem[]).filter(item => !item.perm || authStore.hasPerm(item.perm))
+    if (adminChildren.length) {
+      items.unshift({
+        path: '/basic',
+        titleKey: 'nav.basic',
+        icon: Setting,
+        children: adminChildren,
+      })
+    }
   }
   return items
 })
@@ -132,6 +152,8 @@ function syncGroupExpansion() {
 interface BreadcrumbItem {
   titleKey: string
   path: string
+  /** 是否可点击：带 children 的组节点（如「基础管理」）无实际路由，仅作层级展示，禁止点击 */
+  clickable: boolean
 }
 
 function findMenuChain(items: MenuItem[], targetPath: string, chain: MenuItem[]): MenuItem[] | null {
@@ -149,11 +171,12 @@ function findMenuChain(items: MenuItem[], targetPath: string, chain: MenuItem[])
 const breadcrumbs = computed<BreadcrumbItem[]>(() => {
   const chain = findMenuChain(menuItems.value, route.path, [])
   const items: BreadcrumbItem[] = [
-    { titleKey: 'menu.breadcrumbHome', path: '/inventory' },
+    { titleKey: 'menu.breadcrumbHome', path: '/inventory', clickable: true },
   ]
   if (chain) {
     for (const node of chain) {
-      items.push({ titleKey: node.titleKey, path: node.path })
+      // 组菜单节点（有 children）无对应路由，不可点击
+      items.push({ titleKey: node.titleKey, path: node.path, clickable: !node.children })
     }
   }
   return items
@@ -178,6 +201,7 @@ const pathToTitleKey = (path: string): string => {
     '/sync': 'nav.sync',
     '/users': 'nav.users',
     '/permissions': 'nav.permissions',
+    '/roles': 'nav.roles',
   }
   return map[path] || 'nav.newTab'
 }
@@ -266,8 +290,10 @@ onMounted(async () => {
   if (route.path !== '/' && !route.meta?.public) {
     addTab(route)
   }
-  // 旧缓存登录态无 roles 时补齐（admin 菜单显隐依赖），补齐后立即按角色清理残留 Tab
-  await authStore.ensureRoles()
+  // 每次页面加载强制同步登录态（roles + permissions）：管理员调整角色/权限后，
+  // 受影响用户下次打开页面即拿到最新权限（localStorage 旧缓存不会自愈，重登才能刷新是不可接受的）。
+  // 同步失败静默保持现有缓存；权限变化由下方 watch 联动清理 Tab。
+  await authStore.refreshLoginState()
   enforceTabPermissions()
   // 当前路由命中基础管理子项时自动展开该组
   syncGroupExpansion()
@@ -284,9 +310,10 @@ watch(() => route.fullPath, () => {
   syncGroupExpansion()
 })
 
-// 登录身份变化（登录/退出/换号）：按新角色同步清理 Tab（退出时清空，换非 admin 账号时移除账号管理）
+// 登录身份变化（登录/退出/换号/权限调整）：按新登录态同步清理 Tab
+// （退出清空，换非 admin 账号移除账号管理，权限被收走时移除对应无权限 Tab）
 watch(
-  () => [authStore.isLoggedIn, authStore.user?.id, authStore.user?.roles] as const,
+  () => [authStore.isLoggedIn, authStore.user?.id, authStore.user?.roles, authStore.user?.permissions] as const,
   () => {
     enforceTabPermissions()
   }
@@ -440,19 +467,21 @@ watch(() => i18n.locale, () => {
 
     <!-- 主内容区 -->
     <div class="main-container">
-      <!-- 面包屑条：多级菜单层级导航（首页 / 基础管理 / 账号管理） -->
+      <!-- 面包屑条：多级菜单层级导航（首页 / 基础管理 / 账号管理）
+           组节点（如「基础管理」）无实际路由，仅展示不可点击 -->
       <div class="breadcrumb-bar">
         <template v-for="(crumb, idx) in breadcrumbs" :key="crumb.path + '-' + idx">
           <span
             v-if="idx > 0"
             class="breadcrumb-sep"
           >
-            <el-icon><ArrowRight /></el-icon>
+            <el-icon><ArrowRight color="#000" /></el-icon>
           </span>
-          <!-- 最后一级为当前位置（不可点）；其余可点击跳转 -->
+          <!-- 最后一级为当前位置（不可点）；可点项仅限真实路由（首页/叶子页）；组节点纯展示 -->
           <span
-            v-if="idx === breadcrumbs.length - 1"
-            class="breadcrumb-item is-current"
+            v-if="idx === breadcrumbs.length - 1 || !crumb.clickable"
+            class="breadcrumb-item"
+            :class="idx === breadcrumbs.length - 1 ? 'is-current' : 'is-plain'"
           >
             {{ i18n.t(crumb.titleKey) }}
           </span>
@@ -815,6 +844,13 @@ body {
 .breadcrumb-item.is-link:hover {
   color: #3b82f6;
   background-color: #eff6ff;
+}
+
+/* 组节点（如「基础管理」）：无路由，纯层级展示，不可点击 */
+.breadcrumb-item.is-plain {
+  color: #64748b;
+  cursor: default;
+  user-select: none;
 }
 
 .breadcrumb-item.is-current {

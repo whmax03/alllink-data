@@ -1,22 +1,19 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Key, User, Lock, Platform, Monitor, Folder, Checked } from '@element-plus/icons-vue'
+import type { ElTree } from 'element-plus'
+import { Key, Checked } from '@element-plus/icons-vue'
 import { rbacApi } from '../api'
+import { useAuthStore } from '../stores/auth'
 import { i18n } from '../i18n'
 
 const t = i18n.t
+const authStore = useAuthStore()
+const route = useRoute()
 
 const loading = ref(false)
 const saving = ref(false)
-
-interface PermissionItem {
-  id: number
-  name: string
-  code: string
-  type: string
-  description?: string
-}
 
 interface RoleItem {
   id: number
@@ -27,51 +24,131 @@ interface RoleItem {
 }
 
 const roles = ref<RoleItem[]>([])
-const permissions = ref<PermissionItem[]>([])
 const selectedRoleCode = ref('')
+const treeRef = ref<InstanceType<typeof ElTree>>()
 
-/** 界面上可见并可配置的权限类型（三类分组） */
-const VISIBLE_TYPES = ['page', 'tab', 'platform'] as const
+// ---------- 权限树结构（展示层结构，节点 code 对应后端权限码） ----------
+// 树的层级：模块 → 子功能 → 细粒度权限（页面/Tab/操作/平台）
+// 组节点（有 children 且无 code）是纯展示容器，不对应后端权限码
+// 节点显示名全部走 i18n 硬编码（与后端种子名同义），树即时渲染、不依赖权限列表接口
+interface TreeNode {
+  key: string          // 树节点唯一 key（组节点用 'group:xxx'，叶子用权限码）
+  label: string        // 显示名（i18n，跟随中英文切换）
+  code?: string        // 叶子节点对应的后端权限码；组节点无
+  children?: TreeNode[]
+}
 
-// 当前选中角色的勾选状态（本地编辑副本）
-const checkedCodes = ref<Set<string>>(new Set())
-// 加载时该角色已有的权限码（用于 dirty 判断与保存时保留界面外权限）
-const roleInitialCodes = ref<string[]>([])
+function permName(code: string): string {
+  return t(`perms.node.${code}`)
+}
 
-// 按类型分组（顺序即展示顺序：页面 → Tab → 平台）
-const pagePerms = computed(() => permissions.value.filter(p => p.type === 'page'))
-const tabPerms = computed(() => permissions.value.filter(p => p.type === 'tab'))
-const platformPerms = computed(() => permissions.value.filter(p => p.type === 'platform'))
+/** 权限树（结构在前端定义，节点名走 i18n 跟随中英文切换；code 对应后端权限码） */
+const permTree = computed<TreeNode[]>(() => [
+  {
+    key: 'group:inventory',
+    label: t('nav.inventory'),
+    children: [
+      { key: 'page:inventory', label: permName('page:inventory'), code: 'page:inventory' },
+      { key: 'tab:domestic', label: permName('tab:domestic'), code: 'tab:domestic', children: [
+          { key: 'platform:金蝶', label: permName('platform:金蝶'), code: 'platform:金蝶' },
+          { key: 'platform:澳霖', label: permName('platform:澳霖'), code: 'platform:澳霖' },
+        ] },
+      { key: 'tab:overseas', label: permName('tab:overseas'), code: 'tab:overseas', children: [
+          { key: 'platform:亚马逊', label: permName('platform:亚马逊'), code: 'platform:亚马逊' },
+          { key: 'platform:eBay', label: permName('platform:eBay'), code: 'platform:eBay' },
+          { key: 'platform:Shopee', label: permName('platform:Shopee'), code: 'platform:Shopee' },
+          { key: 'platform:Tiktok', label: permName('platform:Tiktok'), code: 'platform:Tiktok' },
+        ] },
+    ],
+  },
+  // {
+  //   key: 'group:basic',
+  //   label: t('nav.basic'),
+  //   children: [
+  //     {
+  //       key: 'group:users',
+  //       label: t('nav.users'),
+//       children: [
+  //         { key: 'page:users', label: permName('page:users'), code: 'page:users' },
+  //         { key: 'action:users:create', label: permName('action:users:create'), code: 'action:users:create' },
+  //         { key: 'action:users:reset_password', label: permName('action:users:reset_password'), code: 'action:users:reset_password' },
+  //         { key: 'action:users:delete', label: permName('action:users:delete'), code: 'action:users:delete' },
+  //       ],
+  //     },
+  //     {
+  //       key: 'group:rbac',
+  //       label: t('nav.permissions'),
+  //       children: [
+  //         { key: 'page:rbac', label: permName('page:rbac'), code: 'page:rbac' },
+  //       ],
+  //     },
+  //   ],
+  // },
+])
+
+/** 树上出现过的全部权限码（含带 children 的非叶子节点，如 tab:* 的 key 即权限码） */
+const treeKnownCodes = computed<string[]>(() => {
+  const codes: string[] = []
+  const walk = (nodes: TreeNode[]) => {
+    for (const n of nodes) {
+      if (n.children) walk(n.children)
+      if (n.code) codes.push(n.code)
+    }
+  }
+  walk(permTree.value)
+  return codes
+})
+
+/** 树上叶子权限码（无 children 的节点；tab:* 容器码不在此列）——回显专用 */
+const treeLeafCodes = computed<string[]>(() => {
+  const codes: string[] = []
+  const walk = (nodes: TreeNode[]) => {
+    for (const n of nodes) {
+      if (n.children) walk(n.children)
+      else if (n.code) codes.push(n.code)
+    }
+  }
+  walk(permTree.value)
+  return codes
+})
 
 const selectedRole = computed(() =>
   roles.value.find(r => r.code === selectedRoleCode.value) || null
 )
 
-// 统计卡
-const stats = computed(() => ({
-  roles: roles.value.length,
-  perms: permissions.value.length,
-  platforms: platformPerms.value.length,
-}))
+/** admin 角色拥有全部权限，禁止修改：选中 admin 时树只读、保存禁用 */
+const isReadonlyAdmin = computed(() => selectedRole.value?.code === 'admin')
 
-// 是否有未保存修改
+// 加载时该角色已有的权限码（保存时保留树上未展示的权限，如 data:*）
+const roleInitialCodes = ref<string[]>([])
+
+// 是否有未保存修改（比对树上勾选权限码集合 vs 初始树上权限码集合）
 const dirty = computed(() => {
-  const current = [...checkedCodes.value].sort().join('|')
-  const initial = [...roleInitialCodes.value].sort().join('|')
+  const current = getCurrentCheckedCodes().sort().join('|')
+  const initial = roleInitialCodes.value
+    .filter(code => treeKnownCodes.value.includes(code))
+    .sort().join('|')
   return current !== initial
 })
 
-// 三组权限的勾选数（组标题上展示）
-function groupCount(list: PermissionItem[]): string {
-  const checked = list.filter(p => checkedCodes.value.has(p.code)).length
-  return `${checked}/${list.length}`
+/**
+ * 从 el-tree 取当前勾选的权限码：
+ * - 全选节点：含非叶子（勾「国内仓Tab」时 tab:domestic + 平台码一并收上）
+ * - 半选节点也计入（部分勾选平台时保留 tab 权限，避免覆盖式保存静默丢 Tab 权限）
+ * - 组容器（group:*）无 code 自然被过滤
+ */
+function getCurrentCheckedCodes(): string[] {
+  if (!treeRef.value) return []
+  const checked = (treeRef.value.getCheckedNodes(false) as TreeNode[]).map(n => n.code)
+  const half = (treeRef.value.getHalfCheckedNodes() as TreeNode[]).map(n => n.code)
+  return [...new Set([...checked, ...half].filter(Boolean))] as string[]
 }
 
 async function loadRoles(keepSelection = true) {
-  const { data } = await rbacApi.roles()
+  // 拉全量（角色数量小，下拉/树需要完整清单；pageSize 默认 100 同全量）
+  const { data } = await rbacApi.roles({ pageNo: 1, pageSize: 100 })
   if (data.code === 200) {
-    roles.value = data.data || []
-    // 保持当前选中；首次进入默认选第一个角色
+    roles.value = data.data?.list || []
     if (keepSelection && selectedRoleCode.value && roles.value.some(r => r.code === selectedRoleCode.value)) {
       applyRoleSelection(selectedRoleCode.value)
     } else if (roles.value.length > 0) {
@@ -79,29 +156,60 @@ async function loadRoles(keepSelection = true) {
       applyRoleSelection(selectedRoleCode.value)
     } else {
       selectedRoleCode.value = ''
-      checkedCodes.value = new Set()
-      roleInitialCodes.value = []
     }
   } else {
     ElMessage.error(data.message || t('perms.loadFailed'))
   }
 }
 
-async function loadPermissions() {
-  const { data } = await rbacApi.permissions()
-  if (data.code === 200) {
-    permissions.value = data.data || []
-  } else {
-    ElMessage.error(data.message || t('perms.loadFailed'))
-  }
+/** 选中角色变化：把角色的权限码设置到树勾选（等树渲染完成后同步），并查询权限详情 */
+async function applyRoleSelection(_code: string) {
+  const role = roles.value.find(r => r.code === selectedRoleCode.value)
+  roleInitialCodes.value = (role?.permissions || []).map(p => p.code)
+  await nextTick()
+  if (!treeRef.value) return
+  treeRef.value.setCheckedKeys([])
+  // 回显只勾叶子码：tab:* 容器码不传，由 el-tree 依据子节点勾选自动呈现半选/全选。
+  // 若把容器码传给 setCheckedKeys，非严格模式会向下级联勾选全部平台子节点
+  // （保存后其他平台也自动勾上的根因，且再点保存会把全量平台写进数据库）。
+  const leafOnTree = roleInitialCodes.value.filter(code => treeLeafCodes.value.includes(code))
+  treeRef.value.setCheckedKeys(leafOnTree)
+  // 同步查询该角色的权限详情（详情面板渲染）
+  loadRoleDetail()
 }
 
-// 选中角色变化：初始化勾选状态（未保存的修改不保留，直接按角色现有权限展示）
-function applyRoleSelection(code: string) {
-  const role = roles.value.find(r => r.code === code)
-  const codes = (role?.permissions || []).map(p => p.code)
-  roleInitialCodes.value = codes
-  checkedCodes.value = new Set(codes)
+// ---------- 权限详情面板（选中角色时查询并渲染） ----------
+interface RoleDetail {
+  id: number
+  name: string
+  code: string
+  description?: string
+  is_admin: boolean
+  permissions: Array<{ id: number; name: string; code: string; type: string }>
+}
+
+const detailLoading = ref(false)
+const roleDetail = ref<RoleDetail | null>(null)
+
+async function loadRoleDetail() {
+  const role = roles.value.find(r => r.code === selectedRoleCode.value)
+  if (!role) {
+    roleDetail.value = null
+    return
+  }
+  detailLoading.value = true
+  try {
+    const { data } = await rbacApi.rolePermissionDetail(role.id)
+    if (data.code === 200) {
+      roleDetail.value = data.data || null
+    } else {
+      ElMessage.error(data.message || t('perms.loadFailed'))
+    }
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.message || t('perms.loadFailed'))
+  } finally {
+    detailLoading.value = false
+  }
 }
 
 function handleRoleChange(code: string) {
@@ -109,39 +217,15 @@ function handleRoleChange(code: string) {
   applyRoleSelection(code)
 }
 
-function togglePerm(code: string, checked: boolean) {
-  if (checked) {
-    checkedCodes.value.add(code)
-  } else {
-    checkedCodes.value.delete(code)
-  }
-  // 触发 Set 响应式更新（替换引用）
-  checkedCodes.value = new Set(checkedCodes.value)
-}
-
-function toggleGroup(list: PermissionItem[], selectAll: boolean) {
-  for (const p of list) {
-    if (selectAll) checkedCodes.value.add(p.code)
-    else checkedCodes.value.delete(p.code)
-  }
-  checkedCodes.value = new Set(checkedCodes.value)
-}
-
-function isGroupAllChecked(list: PermissionItem[]): boolean {
-  return list.length > 0 && list.every(p => checkedCodes.value.has(p.code))
-}
-
 async function handleSave() {
   if (!selectedRole.value) return
+  if (isReadonlyAdmin.value) return // admin 角色禁止修改权限
   saving.value = true
   try {
-    // 提交的权限 = 界面三类勾选 + 该角色已有但不在界面上的权限（如 data:import/export），
-    // 避免覆盖式保存悄悄移除界面上未展示的权限类型
-    const preserved = roleInitialCodes.value.filter(code => {
-      const perm = permissions.value.find(p => p.code === code)
-      return perm ? !VISIBLE_TYPES.includes(perm.type as any) : true
-    })
-    const merged = [...new Set([...checkedCodes.value, ...preserved])]
+    // 提交的权限 = 树上勾选/半选的权限码（含 tab:*，半选保留防覆盖式保存丢 Tab 权限）
+    // ∪ 该角色已有但树上未展示的权限（如 data:*，避免覆盖式保存悄悄清掉）
+    const preserved = roleInitialCodes.value.filter(code => !treeKnownCodes.value.includes(code))
+    const merged = [...new Set([...getCurrentCheckedCodes(), ...preserved])]
 
     const { data } = await rbacApi.assignPermissions({
       role_code: selectedRole.value.code,
@@ -149,6 +233,8 @@ async function handleSave() {
     })
     if (data.code === 200) {
       ElMessage.success(t('perms.saved'))
+      // 同步当前登录态：若当前账号绑定了被改角色，roles/permissions 立即生效（菜单/Tab/按钮显隐响应）
+      await authStore.refreshLoginState()
       await loadRoles()
     } else {
       ElMessage.error(data.message || t('perms.saveFailed'))
@@ -163,7 +249,14 @@ async function handleSave() {
 onMounted(async () => {
   loading.value = true
   try {
-    await Promise.all([loadRoles(false), loadPermissions()])
+    // 只拉角色列表（树节点名走 i18n 硬编码，不再依赖权限列表接口，树即时渲染）
+    await loadRoles(false)
+    // 角色管理页点击角色名称跳转：携带 roleCode 参数时选中对应角色
+    // （loadRoles(false) 已默认选第一个角色，此处覆盖为指定角色；角色不存在则保持默认）
+    const roleCode = route.query.roleCode as string | undefined
+    if (roleCode && roles.value.some(r => r.code === roleCode) && selectedRoleCode.value !== roleCode) {
+      handleRoleChange(roleCode)
+    }
   } catch (e: any) {
     ElMessage.error(e.response?.data?.message || t('perms.loadFailed'))
   } finally {
@@ -190,7 +283,7 @@ onMounted(async () => {
           type="primary"
           :icon="Checked"
           :loading="saving"
-          :disabled="!dirty || !selectedRole"
+          :disabled="!dirty || !selectedRole || isReadonlyAdmin"
           plain
           round
           @click="handleSave"
@@ -200,42 +293,6 @@ onMounted(async () => {
       </div>
     </div>
 
-    <!-- 数据概览卡片 -->
-    <el-row :gutter="20" class="stats-row">
-      <el-col :span="8">
-        <div class="stat-card">
-          <div class="stat-icon-wrapper blue">
-            <el-icon><User /></el-icon>
-          </div>
-          <div class="stat-info">
-            <span class="stat-label">{{ t('perms.roleCount') }}</span>
-            <span class="stat-value">{{ stats.roles }}</span>
-          </div>
-        </div>
-      </el-col>
-      <el-col :span="8">
-        <div class="stat-card">
-          <div class="stat-icon-wrapper orange">
-            <el-icon><Lock /></el-icon>
-          </div>
-          <div class="stat-info">
-            <span class="stat-label">{{ t('perms.permCount') }}</span>
-            <span class="stat-value">{{ stats.perms }}</span>
-          </div>
-        </div>
-      </el-col>
-      <el-col :span="8">
-        <div class="stat-card">
-          <div class="stat-icon-wrapper green">
-            <el-icon><Platform /></el-icon>
-          </div>
-          <div class="stat-info">
-            <span class="stat-label">{{ t('perms.platformCount') }}</span>
-            <span class="stat-value">{{ stats.platforms }}</span>
-          </div>
-        </div>
-      </el-col>
-    </el-row>
 
     <!-- 主体内容卡片 -->
     <el-card class="main-content-card" shadow="never">
@@ -258,9 +315,9 @@ onMounted(async () => {
         <span v-else class="role-empty">{{ t('perms.noRole') }}</span>
       </div>
 
-      <!-- 角色说明 -->
+      <!-- 角色说明（admin 只读提示） -->
       <el-alert
-        v-if="selectedRole?.code === 'admin'"
+        v-if="isReadonlyAdmin"
         :title="t('perms.adminNote')"
         type="info"
         :closable="false"
@@ -274,112 +331,30 @@ onMounted(async () => {
         class="role-note"
       />
 
-      <!-- 权限分组：页面权限 -->
-      <div class="perm-section">
-        <div class="perm-section-header">
-          <el-icon class="section-icon page"><Monitor /></el-icon>
-          <div class="section-text">
-            <span class="section-title">{{ t('perms.section.page') }}</span>
-            <span class="section-count">{{ groupCount(pagePerms) }}</span>
-            <span class="section-desc">{{ t('perms.sectionDesc.page') }}</span>
-          </div>
-          <el-button
-            size="small"
-            text
-            type="primary"
-            @click="toggleGroup(pagePerms, !isGroupAllChecked(pagePerms))"
-          >
-            {{ t('perms.selectAll') }}
-          </el-button>
+      <!-- 权限树（admin 选中时只读禁用：勾选框置灰、树背景变淡） -->
+      <div class="perm-tree-section">
+        <div class="perm-tree-header">
+          <span class="tree-title">{{ t('perms.treeTitle') }}</span>
+          <span class="tree-hint">{{ t('perms.treeHint') }}</span>
         </div>
-        <div v-if="pagePerms.length" class="perm-grid">
-          <div
-            v-for="perm in pagePerms"
-            :key="perm.code"
-            class="perm-item"
-          >
-            <el-checkbox
-              :model-value="checkedCodes.has(perm.code)"
-              @update:model-value="togglePerm(perm.code, $event as boolean)"
-            >
-              <span class="perm-name">{{ perm.name }}</span>
-              <span class="perm-code">{{ perm.code }}</span>
-            </el-checkbox>
-          </div>
-        </div>
-        <div v-else class="perm-empty">-</div>
-      </div>
-
-      <!-- 权限分组：Tab 权限 -->
-      <div class="perm-section">
-        <div class="perm-section-header">
-          <el-icon class="section-icon tab"><Folder /></el-icon>
-          <div class="section-text">
-            <span class="section-title">{{ t('perms.section.tab') }}</span>
-            <span class="section-count">{{ groupCount(tabPerms) }}</span>
-            <span class="section-desc">{{ t('perms.sectionDesc.tab') }}</span>
-          </div>
-          <el-button
-            size="small"
-            text
-            type="primary"
-            @click="toggleGroup(tabPerms, !isGroupAllChecked(tabPerms))"
-          >
-            {{ t('perms.selectAll') }}
-          </el-button>
-        </div>
-        <div v-if="tabPerms.length" class="perm-grid">
-          <div
-            v-for="perm in tabPerms"
-            :key="perm.code"
-            class="perm-item"
-          >
-            <el-checkbox
-              :model-value="checkedCodes.has(perm.code)"
-              @update:model-value="togglePerm(perm.code, $event as boolean)"
-            >
-              <span class="perm-name">{{ perm.name }}</span>
-              <span class="perm-code">{{ perm.code }}</span>
-            </el-checkbox>
-          </div>
-        </div>
-        <div v-else class="perm-empty">-</div>
-      </div>
-
-      <!-- 权限分组：平台权限 -->
-      <div class="perm-section">
-        <div class="perm-section-header">
-          <el-icon class="section-icon platform"><Platform /></el-icon>
-          <div class="section-text">
-            <span class="section-title">{{ t('perms.section.platform') }}</span>
-            <span class="section-count">{{ groupCount(platformPerms) }}</span>
-            <span class="section-desc">{{ t('perms.sectionDesc.platform') }}</span>
-          </div>
-          <el-button
-            size="small"
-            text
-            type="primary"
-            @click="toggleGroup(platformPerms, !isGroupAllChecked(platformPerms))"
-          >
-            {{ t('perms.selectAll') }}
-          </el-button>
-        </div>
-        <div v-if="platformPerms.length" class="perm-grid">
-          <div
-            v-for="perm in platformPerms"
-            :key="perm.code"
-            class="perm-item"
-          >
-            <el-checkbox
-              :model-value="checkedCodes.has(perm.code)"
-              @update:model-value="togglePerm(perm.code, $event as boolean)"
-            >
-              <span class="perm-name">{{ perm.name }}</span>
-              <span class="perm-code">{{ perm.code }}</span>
-            </el-checkbox>
-          </div>
-        </div>
-        <div v-else class="perm-empty">-</div>
+        <el-tree
+          ref="treeRef"
+          :data="permTree"
+          node-key="key"
+          show-checkbox
+          default-expand-all
+          :expand-on-click-node="false"
+          :check-strictly="false"
+          :class="['perm-tree', { 'is-readonly': isReadonlyAdmin }]"
+          :props="{ disabled: () => isReadonlyAdmin }"
+        >
+          <template #default="{ data }">
+            <div class="tree-node">
+              <span class="node-label" :class="{ 'is-group': !data.code }">{{ data.label }}</span>
+              <span v-if="data.code" class="node-code">{{ data.code }}</span>
+            </div>
+          </template>
+        </el-tree>
       </div>
     </el-card>
   </div>
@@ -439,59 +414,6 @@ onMounted(async () => {
   font-weight: 600;
 }
 
-/* 统计卡片 */
-.stats-row {
-  margin-bottom: 24px;
-}
-
-.stat-card {
-  background: white;
-  border-radius: 16px;
-  padding: 20px;
-  display: flex;
-  align-items: center;
-  gap: 20px;
-  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
-  transition: transform 0.2s, box-shadow 0.2s;
-}
-
-.stat-card:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.05);
-}
-
-.stat-icon-wrapper {
-  width: 56px;
-  height: 56px;
-  border-radius: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 24px;
-}
-
-.stat-icon-wrapper.blue { background: #eff6ff; color: #3b82f6; }
-.stat-icon-wrapper.orange { background: #fff7ed; color: #f97316; }
-.stat-icon-wrapper.green { background: #f0fdf4; color: #22c55e; }
-
-.stat-info {
-  display: flex;
-  flex-direction: column;
-}
-
-.stat-label {
-  font-size: 13px;
-  font-weight: 500;
-  color: #94a3b8;
-  margin-bottom: 4px;
-}
-
-.stat-value {
-  font-size: 24px;
-  font-weight: 700;
-  color: #1e293b;
-}
-
 /* 主内容卡片 */
 .main-content-card {
   border-radius: 20px;
@@ -524,91 +446,188 @@ onMounted(async () => {
   margin-top: 16px;
 }
 
-/* 权限分组区块 */
-.perm-section {
+/* 权限树区块 */
+.perm-tree-section {
   margin-top: 20px;
-  padding: 4px 0 8px;
 }
 
-.perm-section-header {
+/* 权限详情面板 */
+.perm-detail-section {
+  margin-top: 16px;
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 14px 16px;
+  background: #ffffff;
+  min-height: 60px;
+}
+
+.perm-detail-header {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-bottom: 12px;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.section-icon {
-  font-size: 18px;
-  padding: 8px;
-  border-radius: 10px;
+.detail-icon {
+  font-size: 15px;
+  color: #3b82f6;
+  background: #eff6ff;
+  padding: 6px;
+  border-radius: 8px;
 }
 
-.section-icon.page { background: #eff6ff; color: #3b82f6; }
-.section-icon.tab { background: #f5f3ff; color: #8b5cf6; }
-.section-icon.platform { background: #f0fdf4; color: #22c55e; }
-
-.section-text {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-}
-
-.section-title {
+.detail-title {
   font-size: 15px;
   font-weight: 700;
   color: #1e293b;
 }
 
-.section-count {
+.detail-role-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #334155;
+}
+
+.detail-role-code {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  background: #f1f5f9;
+  padding: 1px 8px;
+  border-radius: 4px;
+  color: #64748b;
+  font-size: 11px;
+}
+
+.detail-count {
+  margin-left: auto;
   font-size: 12px;
   font-weight: 600;
   color: #3b82f6;
   background: #eff6ff;
-  padding: 1px 8px;
+  padding: 2px 10px;
   border-radius: 999px;
 }
 
-.section-desc {
+.detail-desc {
+  margin: 10px 0 0;
+  font-size: 12.5px;
+  color: #64748b;
+}
+
+.detail-admin-alert {
+  margin-top: 10px;
+}
+
+.detail-groups {
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.detail-group {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.detail-group-label {
+  flex-shrink: 0;
+  width: 76px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #475569;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  padding: 3px 8px;
+  text-align: center;
+}
+
+.detail-group-items {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.detail-perm-tag {
+  cursor: help;
+}
+
+.detail-empty {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #94a3b8;
+}
+
+.perm-tree-header {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  margin-bottom: 12px;
+  flex-wrap: wrap;
+}
+
+.tree-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.tree-hint {
   font-size: 12px;
   color: #94a3b8;
 }
 
-/* 权限项网格 */
-.perm-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 6px 16px;
-  width: 100%;
+.perm-tree {
+  --el-tree-node-content-height: 36px;
+  border: 1px solid #f1f5f9;
+  border-radius: 12px;
+  padding: 10px 12px;
+  background: #fafcff;
 }
 
-.perm-item {
+.perm-tree :deep(.el-tree-node__content) {
+  border-radius: 8px;
+}
+
+.perm-tree :deep(.el-tree-node__content:hover) {
+  background-color: #eff6ff;
+}
+
+/* admin 只读态：树置灰 */
+.perm-tree.is-readonly {
+  background: #f8fafc;
+}
+
+.perm-tree.is-readonly :deep(.el-tree-node__content:hover) {
+  background-color: transparent;
+}
+
+/* 树节点：组节点加粗，叶子节点右侧显示权限码 */
+.tree-node {
   display: flex;
   align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
 }
 
-.perm-item :deep(.el-checkbox) {
-  height: auto;
-  width: 100%;
-}
-
-.perm-name {
+.node-label {
   font-size: 14px;
-  font-weight: 500;
   color: #334155;
 }
 
-.perm-code {
-  margin-left: 8px;
+.node-label.is-group {
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.node-code {
   font-size: 11px;
   font-family: 'JetBrains Mono', 'Fira Code', monospace;
   color: #94a3b8;
-}
-
-.perm-empty {
-  color: #94a3b8;
-  font-size: 13px;
-  padding: 8px 0;
+  background: #f1f5f9;
+  padding: 1px 6px;
+  border-radius: 4px;
 }
 </style>

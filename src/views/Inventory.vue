@@ -5,8 +5,10 @@ import dayjs from 'dayjs'
 import { Box, Ship, Location, Refresh, Search, CopyDocument } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { i18n } from '../i18n'
+import { useAuthStore } from '../stores/auth'
 
 const t = i18n.t
+const authStore = useAuthStore()
 
 const loading = ref(false)
 const inventory = ref<any[]>([])
@@ -27,19 +29,45 @@ const selectedWarehouseType = ref('')
 // 国内仓平台筛选条件
 const selectedDomesticPlatform = ref('')
 
-// 国内仓平台选项
-const domesticPlatformOptions = [
+// 国内仓平台选项（按 platform:xxx 权限码过滤；admin 恒全量）
+const domesticPlatformOptions = computed(() => [
   { label: '金蝶', value: '金蝶' },
   { label: '澳霖', value: '澳霖' },
-]
+].filter(opt => authStore.hasPerm(`platform:${opt.value}`)))
 
-// 平台选项
-const platformOptions = [
+// 海外仓平台选项（按 platform:xxx 权限码过滤；admin 恒全量）
+const platformOptions = computed(() => [
   { label: '亚马逊', value: '亚马逊' },
   { label: 'eBay', value: 'eBay' },
   { label: 'Shopee', value: 'Shopee' },
   { label: 'Tiktok', value: 'Tiktok' },
-]
+].filter(opt => authStore.hasPerm(`platform:${opt.value}`)))
+
+// ---------- 国内仓/海外仓 Tab 权限显隐 ----------
+// 各自按 tab:domestic / tab:overseas 权限码控制；两者皆无时保底显示国内仓（至少一个 Tab，页面结构可用）
+const showDomesticTab = computed(() => authStore.hasPerm('tab:domestic') || !authStore.hasPerm('tab:overseas'))
+const showOverseasTab = computed(() => authStore.hasPerm('tab:overseas'))
+
+// 当前激活 Tab 无权限时自动切到可见 Tab（权限加载完成后触发；activeTab 变化由既有 watch 触发重载）
+watch([showDomesticTab, showOverseasTab], () => {
+  if (activeTab.value === 'domestic' && !showDomesticTab.value && showOverseasTab.value) {
+    activeTab.value = 'overseas'
+  } else if (activeTab.value === 'overseas' && !showOverseasTab.value && showDomesticTab.value) {
+    activeTab.value = 'domestic'
+  }
+}, { immediate: true })
+
+// 平台权限变化后：清掉已选中但已无权限的平台筛选（防残留查询参数；清空会触发既有 watch 重载）
+watch(platformOptions, opts => {
+  if (selectedPlatform.value && !opts.some(o => o.value === selectedPlatform.value)) {
+    selectedPlatform.value = ''
+  }
+})
+watch(domesticPlatformOptions, opts => {
+  if (selectedDomesticPlatform.value && !opts.some(o => o.value === selectedDomesticPlatform.value)) {
+    selectedDomesticPlatform.value = ''
+  }
+})
 
 // 各平台对应的国家映射
 const countryMap: Record<string, { label: string; value: string }[]> = {
@@ -296,14 +324,14 @@ onMounted(loadInventory)
       <div class="filter-toolbar">
         <div class="toolbar-left">
           <el-tabs v-model="activeTab" class="modern-tabs">
-            <el-tab-pane name="domestic">
+            <el-tab-pane v-if="showDomesticTab" name="domestic">
               <template #label>
                 <span class="tab-label">
                   <el-icon><Location /></el-icon> {{ t('inventory.domestic') }}
                 </span>
               </template>
             </el-tab-pane>
-            <el-tab-pane name="overseas">
+            <el-tab-pane v-if="showOverseasTab" name="overseas">
               <template #label>
                 <span class="tab-label">
                   <el-icon><Ship /></el-icon> {{ t('inventory.overseas') }}
