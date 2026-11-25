@@ -163,7 +163,7 @@ async function loadInventory() {
         Object.assign(item, { ...item.raw_data })
       })
 
-      console.error('库存数据:', inventory.value)
+      // console.error('库存数据:', inventory.value)
       totalSkus.value = data.data.totalSkuNum || 0
       total.value = data.data.total || 0
       totalStockCount.value = data.data.totalStock || 0

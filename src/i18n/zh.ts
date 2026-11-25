@@ -23,6 +23,11 @@ export default {
   'menu.breadcrumbHome': '首页',
   'tabs.keepAtLeastOne': '至少保留一个标签页',
 
+  // 404 页
+  'notFound.title': '页面不存在或无访问权限',
+  'notFound.desc': '您访问的页面不存在，或当前账号没有访问权限，请联系管理员分配权限。',
+  'notFound.backHome': '返回首页',
+
   // 独立页面标题（document.title / 路由 meta）
   'auth.loginTitle': '登录',
   'auth.registerTitle': '注册',

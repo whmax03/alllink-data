@@ -235,6 +235,7 @@ onMounted(loadRoles)
           :data="roles"
           v-loading="loading"
           style="width: 100%"
+          height="calc(100vh - 460px)"
           row-class-name="premium-table-row"
           header-cell-class-name="premium-table-header"
         >
@@ -531,9 +532,9 @@ onMounted(loadRoles)
   box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05) !important;
 }
 
-/* 表格 */
+/* 表格（与账号管理页同款：固定高度滚动，分页条贴底） */
 .table-wrapper-premium {
-  margin-bottom: 8px;
+  margin-bottom: 20px;
 }
 
 :deep(.premium-table-header) {

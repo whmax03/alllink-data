@@ -67,12 +67,17 @@ const isStandalonePage = computed(() => {
     })
     if (tabs.value.length !== before) {
       saveTabs()
-      // 当前激活 Tab 被清理时，切到首个幸存 Tab（否则库存页）
+      // 当前激活 Tab 被清理时，切到首个幸存 Tab；全部被清（无任何页面权限）时跳 404，不再硬保库存 Tab
       const activePath = activeTab.value
       if (!activePath || !tabs.value.some(tab => tab.path === activePath)) {
-        const fallback = tabs.value[0]?.path || '/inventory'
-        activeTab.value = fallback
-        router.push(fallback)
+        const fallback = tabs.value[0]?.path
+        if (fallback) {
+          activeTab.value = fallback
+          router.push(fallback)
+        } else {
+          // 无任何可用页面权限（菜单为空、Tab 全清）：跳 404 页展示“无权限”而非空壳布局
+          router.push({ name: 'NotFound' })
+        }
       }
       return true
     }
@@ -235,7 +240,7 @@ const addTab = (toRoute: any) => {
   const { path, meta } = toRoute
   // 排除根路径或重定向路径
   if (path === '/') return
-  // 排除独立页面（登录/注册/修改密码），不加入 Tab
+  // 排除独立页面（登录/注册/修改密码/404），不加入 Tab
   if (meta?.public) return
 
   const titleKey = (meta?.titleKey as string) || pathToTitleKey(path)
@@ -516,7 +521,6 @@ watch(() => i18n.locale, () => {
         </div>
 
         <div class="header-right">
-          <!-- 中英文切换：位于头像左侧 -->
           <LangSwitch variant="light" class="header-lang-switch" />
           <el-dropdown trigger="click">
             <div class="user-profile-dropdown">

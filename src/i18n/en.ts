@@ -23,6 +23,11 @@ export default {
   'menu.breadcrumbHome': 'Home',
   'tabs.keepAtLeastOne': 'Keep at least one tab open',
 
+  // 404 page
+  'notFound.title': 'Page Not Found or Access Denied',
+  'notFound.desc': 'The page does not exist, or your account has no access to it. Please contact the administrator.',
+  'notFound.backHome': 'Back to Home',
+
   // Standalone page titles (document.title / route meta)
   'auth.loginTitle': 'Sign In',
   'auth.registerTitle': 'Register',
