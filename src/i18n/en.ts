@@ -2,6 +2,8 @@
 export default {
   'common.switchLang': 'Switch Language',
   'common.confirm': 'Notice',
+  'common.cancel': 'Cancel',
+  'common.save': 'Save',
 
   // Layout (App.vue)
   'app.systemStatus': 'System Normal',
@@ -116,6 +118,14 @@ export default {
   'inventory.barcode': 'Barcode',
   'inventory.available': 'Available',
   'inventory.unit': 'Unit',
+  'inventory.owner': 'Owner',
+  'inventory.remark': 'Remark',
+  'inventory.remarkDialogTitle': 'Edit Remark',
+  'inventory.remarkPlaceholder': 'Enter remark (max 500 characters)',
+  'inventory.remarkEditTip': 'Edit remark',
+  'inventory.remarkSaved': 'Remark saved',
+  'inventory.remarkSaveFailed': 'Failed to save remark',
+  'inventory.remarkTooLong': 'Remark must be at most 500 characters',
   'inventory.importedAt': 'Imported At',
   'inventory.copy': 'Copy',
   'inventory.copiedPrefix': 'Copied: ',

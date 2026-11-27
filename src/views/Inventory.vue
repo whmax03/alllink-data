@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue'
-import { queryApi } from '../api'
+import { queryApi, inventoryApi } from '../api'
 import dayjs from 'dayjs'
-import { Box, Ship, Location, Refresh, Search, CopyDocument } from '@element-plus/icons-vue'
+import { Box, Ship, Location, Refresh, Search, CopyDocument, EditPen } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { i18n } from '../i18n'
 import { useAuthStore } from '../stores/auth'
@@ -180,6 +180,44 @@ async function loadInventory() {
 function handleSearch() {
   currentPage.value = 1
   loadInventory()
+}
+
+// ---------- 备注列：点击编辑图标弹出弹窗编辑 ----------
+const remarkDialogVisible = ref(false)
+const remarkSaving = ref(false)
+// 当前编辑行（保存成功后就地更新 row.remark）
+const remarkTarget = ref<any>(null)
+const remarkForm = ref('')
+
+function openRemarkDialog(row: any) {
+  remarkTarget.value = row
+  remarkForm.value = row.remark || ''
+  remarkDialogVisible.value = true
+}
+
+async function saveRemark() {
+  if (!remarkTarget.value || remarkSaving.value) return
+  const text = remarkForm.value.trim()
+  if (text.length > 500) {
+    ElMessage.warning(t('inventory.remarkTooLong'))
+    return
+  }
+  remarkSaving.value = true
+  try {
+    const { data } = await inventoryApi.updateRemark(remarkTarget.value.id, text)
+    if (data.code === 200) {
+      // 后端返回的 remark 为 null 表示已清空；就地更新当前行
+      remarkTarget.value.remark = (data.data && data.data.remark) || null
+      remarkDialogVisible.value = false
+      ElMessage.success(t('inventory.remarkSaved'))
+    } else {
+      ElMessage.error(data.message || t('inventory.remarkSaveFailed'))
+    }
+  } catch (e: any) {
+    ElMessage.error(e.response?.data?.message || t('inventory.remarkSaveFailed'))
+  } finally {
+    remarkSaving.value = false
+  }
 }
 
 function handlePageChange(val: number) {
@@ -498,8 +536,8 @@ onMounted(loadInventory)
           </el-table-column>
           <el-table-column :label="t('inventory.available')" min-width="100" align="right">
             <template #default="{ row }">
-              <span :class="['stock-value', getStockColor(row.available_qty)]">
-                {{ row.available_qty }}
+              <span :class="['stock-value', getStockColor(row.stock_qty)]">
+                {{ row.stock_qty }}
               </span>
             </template>
           </el-table-column>
@@ -515,9 +553,36 @@ onMounted(loadInventory)
           </el-table-column> -->
           <el-table-column prop="stock_unit" :label="t('inventory.unit')" min-width="120" align="center">
              <template #default="{ row }">
-              <span >{{ row.stock_unit || row.产品单位 || row.库存主单位 || '-' }}</span>
+               <span >{{ row.stock_unit || row.产品单位 || row.库存主单位 || '-' }}</span>
+             </template>
+          </el-table-column>
+          <!-- 海外仓专属：责任人（来自责任人对应关系 Excel，经 sku_owner_map 回填，多人用+连接） -->
+          <el-table-column v-if="activeTab === 'overseas'" prop="owner" :label="t('inventory.owner')" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ row.owner || '-' }}
             </template>
-            </el-table-column>
+          </el-table-column>
+          <!-- 备注：点击编辑图标弹出弹窗编辑；重新导入时按 仓库+SKU 相同自动保留 -->
+          <el-table-column prop="remark" :label="t('inventory.remark')" min-width="200">
+            <template #default="{ row }">
+              <div class="remark-cell">
+                <!-- 备注文本悬浮显示完整内容（限宽换行，防超长备注撑满整屏） -->
+                <el-tooltip
+                  :content="row.remark || '-'"
+                  placement="top"
+                  :disabled="!row.remark"
+                  popper-class="remark-tooltip"
+                >
+                  <span class="remark-text">{{ row.remark || '-' }}</span>
+                </el-tooltip>
+                <el-tooltip :content="t('inventory.remarkEditTip')" placement="top">
+                  <el-icon class="remark-edit-icon" @click="openRemarkDialog(row)">
+                    <EditPen />
+                  </el-icon>
+                </el-tooltip>
+              </div>
+            </template>
+          </el-table-column>
           <el-table-column :label="t('inventory.importedAt')" min-width="170">
             <template #default="{ row }">
               <span class="time-text">{{ row.imported_at ? dayjs(row.imported_at).format('YYYY-MM-DD HH:mm:ss') : '-' }}</span>
@@ -540,6 +605,34 @@ onMounted(loadInventory)
         />
       </div>
     </el-card>
+
+    <!-- 编辑备注弹窗 -->
+    <el-dialog
+      v-model="remarkDialogVisible"
+      :title="t('inventory.remarkDialogTitle')"
+      width="480px"
+      destroy-on-close
+    >
+      <!-- 目标 SKU 信息 -->
+      <div class="remark-dialog-sku">
+        <div class="remark-sku-label">SKU</div>
+        <code class="code-text">{{ remarkTarget?.original_sku || remarkTarget?.sku || '-' }}</code>
+      </div>
+      <el-input
+        v-model="remarkForm"
+        type="textarea"
+        :rows="3"
+        maxlength="500"
+        show-word-limit
+        :placeholder="t('inventory.remarkPlaceholder')"
+      />
+      <template #footer>
+        <el-button round @click="remarkDialogVisible = false">{{ t('common.cancel') }}</el-button>
+        <el-button type="primary" round :loading="remarkSaving" @click="saveRemark">
+          {{ t('common.save') }}
+        </el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -814,6 +907,52 @@ onMounted(loadInventory)
   font-size: 12px;
 }
 
+/* 备注列：文本 + 编辑图标；点击图标弹出编辑弹窗 */
+.remark-cell {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.remark-text {
+  color: #475569;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 编辑图标：默认浅灰不显眼，hover 变蓝放大提示可点 */
+.remark-edit-icon {
+  font-size: 15px;
+  color: #cbd5e1;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: color 0.15s, transform 0.15s;
+}
+
+.remark-edit-icon:hover {
+  color: #3b82f6;
+  transform: scale(1.18);
+}
+
+/* 备注弹窗 SKU 信息行 */
+.remark-dialog-sku {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.remark-sku-label {
+  font-size: 12px;
+  font-weight: 700;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 /* 分页 */
 .pagination-premium {
   display: flex;
@@ -828,5 +967,24 @@ onMounted(loadInventory)
 
 :deep(.el-pagination.is-background .el-pager li.is-active) {
   background-color: #3b82f6;
+}
+</style>
+
+<!-- 全局样式：备注 tooltip 挂在 body 上，scoped 覆盖不到，必须非 scoped -->
+<style>
+.remark-tooltip {
+  /* 限宽 + 强制换行：超长备注（含连续无空格文本）不再横向撑满整屏 */
+  max-width: 360px !important;
+  word-break: break-all;
+  overflow-wrap: anywhere;
+  line-height: 1.5;
+  /* 限高滚动：极端超长备注不至于占满全屏，区域内滚动看全量 */
+  max-height: 240px;
+  overflow-y: auto;
+}
+
+.remark-tooltip .el-tooltip__content {
+  max-height: 240px;
+  overflow-y: auto;
 }
 </style>

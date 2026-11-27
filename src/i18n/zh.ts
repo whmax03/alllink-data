@@ -2,6 +2,8 @@
 export default {
   'common.switchLang': '切换语言',
   'common.confirm': '提示',
+  'common.cancel': '取消',
+  'common.save': '保存',
 
   // 布局（App.vue）
   'app.systemStatus': '系统运行正常',
@@ -116,6 +118,14 @@ export default {
   'inventory.barcode': '产品条码',
   'inventory.available': '可用库存',
   'inventory.unit': '单位',
+  'inventory.owner': '责任人',
+  'inventory.remark': '备注',
+  'inventory.remarkDialogTitle': '编辑备注',
+  'inventory.remarkPlaceholder': '输入备注内容（最长500字符）',
+  'inventory.remarkEditTip': '编辑备注',
+  'inventory.remarkSaved': '备注已保存',
+  'inventory.remarkSaveFailed': '备注保存失败',
+  'inventory.remarkTooLong': '备注最长 500 字符',
   'inventory.importedAt': '导入时间',
   'inventory.copy': '复制',
   'inventory.copiedPrefix': '已复制：',

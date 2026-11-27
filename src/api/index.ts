@@ -150,3 +150,9 @@ export const queryApi = {
   orders: (params: { page: number; pageSize: number }) =>
     api.get('/query/orders', { params }),
 }
+
+/** 库存备注（手工维护；重新导入时按 仓库+SKU 相同自动保留） */
+export const inventoryApi = {
+  updateRemark: (inventoryId: number, remark: string) =>
+    api.put('/inventory/remark', { inventory_id: inventoryId, remark }),
+}
