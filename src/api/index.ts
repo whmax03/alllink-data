@@ -92,6 +92,12 @@ export const userApi = {
     api.delete(`/users/${userId}`),
   resetPassword: (userId: number, newPassword: string) =>
     api.put(`/users/${userId}/password`, { new_password: newPassword }),
+  /** 修改姓名（admin 账号后端拒绝；同时写入姓名修改日志） */
+  updateName: (userId: number, data: { name: string; operator?: string }) =>
+    api.put(`/users/${userId}/name`, data),
+  /** 姓名修改日志（修改前/修改后/操作人/操作时间） */
+  nameLogs: (userId: number) =>
+    api.get(`/users/${userId}/name-logs`),
 }
 
 /** 当前用户角色/权限（旧缓存登录态补 roles 兜底）+ 角色/权限管理页（admin） */
@@ -139,16 +145,38 @@ export const syncApi = {
     api.post('/sync/finance', params),
 }
 
+/** 库存排序参数（后端 sort_by 目前支持 stock_qty） */
+export interface InventorySortParams {
+  sort_by?: 'stock_qty'
+  sort_order?: 'asc' | 'desc'
+}
+
 /** 查询相关 API */
 export const queryApi = {
   dashboard: () =>
     api.get('/query/dashboard'),
-  domesticInventory: (params: { pageSize: number; pageNo: number; sku?: string; platform?: string }) =>
+  domesticInventory: (params: { pageSize: number; pageNo: number; sku?: string; platform?: string } & InventorySortParams) =>
     api.get('/inventory/domestic', { params }),
-  overseasInventory: (params: { pageSize: number; pageNo: number; sku?: string; warehouse_type?: string; platform?: string; country?: string }) =>
+  overseasInventory: (params: { pageSize: number; pageNo: number; sku?: string; warehouse_type?: string; platform?: string; country?: string } & InventorySortParams) =>
     api.get('/inventory/overseas', { params }),
+  /**
+   * 导出库存（xlsx 二进制）。后端按仓校验 export:domestic / export:overseas 权限。
+   * mode=all 全量（忽略筛选）/ filtered 按当前筛选条件
+   */
+  exportDomesticInventory: (params: InventoryExportParams) =>
+    api.get('/inventory/export/domestic', { params, responseType: 'blob', timeout: 300000 }),
+  exportOverseasInventory: (params: InventoryExportParams) =>
+    api.get('/inventory/export/overseas', { params, responseType: 'blob', timeout: 300000 }),
   orders: (params: { page: number; pageSize: number }) =>
     api.get('/query/orders', { params }),
+}
+
+export interface InventoryExportParams extends InventorySortParams {
+  mode: 'all' | 'filtered'
+  sku?: string
+  platform?: string
+  country?: string
+  warehouse_type?: string
 }
 
 /** 库存备注（手工维护；重新导入时按 仓库+SKU 相同自动保留） */

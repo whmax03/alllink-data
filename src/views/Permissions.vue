@@ -48,17 +48,37 @@ const permTree = computed<TreeNode[]>(() => [
     key: 'group:inventory',
     label: t('nav.inventory'),
     children: [
-      { key: 'page:inventory', label: permName('page:inventory'), code: 'page:inventory' },
-      { key: 'tab:domestic', label: permName('tab:domestic'), code: 'tab:domestic', children: [
-          { key: 'platform:金蝶', label: permName('platform:金蝶'), code: 'platform:金蝶' },
-          { key: 'platform:澳霖', label: permName('platform:澳霖'), code: 'platform:澳霖' },
-        ] },
-      { key: 'tab:overseas', label: permName('tab:overseas'), code: 'tab:overseas', children: [
-          { key: 'platform:亚马逊', label: permName('platform:亚马逊'), code: 'platform:亚马逊' },
-          { key: 'platform:eBay', label: permName('platform:eBay'), code: 'platform:eBay' },
-          { key: 'platform:Shopee', label: permName('platform:Shopee'), code: 'platform:Shopee' },
-          { key: 'platform:Tiktok', label: permName('platform:Tiktok'), code: 'platform:Tiktok' },
-        ] },
+      {
+        key: 'page:inventory',
+        label: permName('page:inventory'),
+        code: 'page:inventory',
+        children: [
+          {
+            key: 'tab:domestic',
+            label: permName('tab:domestic'),
+            code: 'tab:domestic',
+            children: [
+              { key: 'platform:金蝶', label: permName('platform:金蝶'), code: 'platform:金蝶' },
+              { key: 'platform:澳霖', label: permName('platform:澳霖'), code: 'platform:澳霖' },
+              // 导出权限：与「查看」分开，勾了才看得到并调得动国内仓导出
+              { key: 'export:domestic', label: t('inventory.export'), code: 'export:domestic' },
+            ],
+          },
+          {
+            key: 'tab:overseas',
+            label: permName('tab:overseas'),
+            code: 'tab:overseas',
+            children: [
+              { key: 'platform:亚马逊', label: permName('platform:亚马逊'), code: 'platform:亚马逊' },
+              { key: 'platform:eBay', label: permName('platform:eBay'), code: 'platform:eBay' },
+              { key: 'platform:Shopee', label: permName('platform:Shopee'), code: 'platform:Shopee' },
+              { key: 'platform:Tiktok', label: permName('platform:Tiktok'), code: 'platform:Tiktok' },
+              // 导出权限：与「查看」分开，勾了才看得到并调得动海外仓导出
+              { key: 'export:overseas', label: t('inventory.export'), code: 'export:overseas' },
+            ],
+          },
+        ],
+      },
     ],
   },
   // {
@@ -99,6 +119,36 @@ const treeKnownCodes = computed<string[]>(() => {
   return codes
 })
 
+/**
+ * 权限码 → 祖先链权限码映射（近 → 远）
+ * 例：platform:亚马逊 → ['tab:overseas', 'page:inventory']
+ * 组容器节点（group:*）无 code，天然不参与继承
+ */
+const parentCodeMap = computed<Record<string, string[]>>(() => {
+  const map: Record<string, string[]> = {}
+  const walk = (nodes: TreeNode[], ancestors: string[]) => {
+    for (const n of nodes) {
+      if (n.code) map[n.code] = [...ancestors]
+      const nextAncestors = n.code ? [n.code, ...ancestors] : ancestors
+      if (n.children) walk(n.children, nextAncestors)
+    }
+  }
+  walk(permTree.value, [])
+  return map
+})
+
+/**
+ * 权限码 → 自身 + 全部祖先权限码（含自己）
+ * 勾选任一节点时，其上游父级权限会一并带上，避免「只给了子权限、父级页面/Tab 进不去」
+ */
+const ancestorCodesOf = computed<Record<string, string[]>>(() => {
+  const map: Record<string, string[]> = {}
+  for (const [code, parents] of Object.entries(parentCodeMap.value)) {
+    map[code] = [code, ...parents]
+  }
+  return map
+})
+
 /** 树上叶子权限码（无 children 的节点；tab:* 容器码不在此列）——回显专用 */
 const treeLeafCodes = computed<string[]>(() => {
   const codes: string[] = []
@@ -122,26 +172,41 @@ const isReadonlyAdmin = computed(() => selectedRole.value?.code === 'admin')
 // 加载时该角色已有的权限码（保存时保留树上未展示的权限，如 data:*）
 const roleInitialCodes = ref<string[]>([])
 
-// 是否有未保存修改（比对树上勾选权限码集合 vs 初始树上权限码集合）
+/**
+ * 初始权限码（树上部分）补齐祖先后的口径。
+ * 历史数据里可能存在「只有平台权限、没有 tab/page 权限」的脏数据，
+ * dirty 比对必须与保存/回显同一口径，否则一进页面就误判「有未保存修改」。
+ */
+const initialTreeCodes = computed<string[]>(() => {
+  const onTree = roleInitialCodes.value.filter(code => treeKnownCodes.value.includes(code))
+  const withAncestors = onTree.flatMap(code => ancestorCodesOf.value[code] || [code])
+  return [...new Set(withAncestors)]
+})
+
+// 是否有未保存修改（比对树上勾选权限码集合 vs 初始树上权限码集合，同一继承口径）
 const dirty = computed(() => {
   const current = getCurrentCheckedCodes().sort().join('|')
-  const initial = roleInitialCodes.value
-    .filter(code => treeKnownCodes.value.includes(code))
-    .sort().join('|')
+  const initial = [...initialTreeCodes.value].sort().join('|')
   return current !== initial
 })
 
 /**
  * 从 el-tree 取当前勾选的权限码：
  * - 全选节点：含非叶子（勾「国内仓Tab」时 tab:domestic + 平台码一并收上）
- * - 半选节点也计入（部分勾选平台时保留 tab 权限，避免覆盖式保存静默丢 Tab 权限）
+ * - 半选节点也计入（部分勾选平台时保留 tab 权限）
+ * - 勾选任一子节点时，自动补齐其全部祖先权限码（如勾 platform:亚马逊 → 带上
+ *   tab:overseas 与 page:inventory），避免「只有子权限、父级页面/Tab 进不去」
  * - 组容器（group:*）无 code 自然被过滤
  */
 function getCurrentCheckedCodes(): string[] {
   if (!treeRef.value) return []
   const checked = (treeRef.value.getCheckedNodes(false) as TreeNode[]).map(n => n.code)
   const half = (treeRef.value.getHalfCheckedNodes() as TreeNode[]).map(n => n.code)
-  return [...new Set([...checked, ...half].filter(Boolean))] as string[]
+  const picked = [...checked, ...half].filter(Boolean) as string[]
+
+  // 展开为「自身 + 祖先链」
+  const withAncestors = picked.flatMap(code => ancestorCodesOf.value[code] || [code])
+  return [...new Set(withAncestors)]
 }
 
 async function loadRoles(keepSelection = true) {
@@ -162,6 +227,25 @@ async function loadRoles(keepSelection = true) {
   }
 }
 
+/**
+ * 回显时的「精确置位」：把节点标记为勾选，但**不向下级联**子节点。
+ *
+ * el-tree 的 setChecked(key, checked, deep) 在非严格模式下会级联；
+ * 而 check-strictly 是 prop，靠 watch 异步同步到 store，同一 tick 内改它并不可靠。
+ * 这里直接调节点自身的 setChecked(value, deep=false, recursion=false)：
+ * - deep=false → 不动子节点（兄弟平台不会被误勾）
+ * - recursion=false → 不触发父链重算（父级勾选状态由叶子自行汇总）
+ */
+function setCheckedExact(key: string) {
+  const tree = treeRef.value as any
+  const node = tree?.store?.getNode?.(key)
+  if (!node) return false
+  // 已经是「全选」时无需再动（避免把已正确的父级改成半选）
+  if (node.checked && !node.indeterminate) return true
+  node.setChecked(true, false, false)
+  return true
+}
+
 /** 选中角色变化：把角色的权限码设置到树勾选（等树渲染完成后同步），并查询权限详情 */
 async function applyRoleSelection(_code: string) {
   const role = roles.value.find(r => r.code === selectedRoleCode.value)
@@ -174,6 +258,18 @@ async function applyRoleSelection(_code: string) {
   // （保存后其他平台也自动勾上的根因，且再点保存会把全量平台写进数据库）。
   const leafOnTree = roleInitialCodes.value.filter(code => treeLeafCodes.value.includes(code))
   treeRef.value.setCheckedKeys(leafOnTree)
+
+  // 历史脏数据补偿：角色「有平台权限、却没有父级 tab/page 权限」时，
+  // 树上的父级只会呈现半选（视觉上像已授权，实际后端没有），
+  // 这里把缺失的祖先权限精确补勾，保证「勾子即勾父」的口径前后一致。
+  const orphanParents: string[] = []
+  for (const code of roleInitialCodes.value.filter(code => treeKnownCodes.value.includes(code))) {
+    for (const parent of parentCodeMap.value[code] || []) {
+      if (!roleInitialCodes.value.includes(parent)) orphanParents.push(parent)
+    }
+  }
+  for (const key of new Set(orphanParents)) setCheckedExact(key)
+
   // 同步查询该角色的权限详情（详情面板渲染）
   loadRoleDetail()
 }
@@ -248,6 +344,8 @@ async function handleSave() {
 
 onMounted(async () => {
   loading.value = true
+      console.log('authStore-->', authStore)
+
   try {
     // 只拉角色列表（树节点名走 i18n 硬编码，不再依赖权限列表接口，树即时渲染）
     await loadRoles(false)

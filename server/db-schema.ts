@@ -22,6 +22,20 @@ CREATE TABLE IF NOT EXISTS users (
 );
 
 -- ============================================
+-- 0.1 姓名修改日志表（谁在什么时间把姓名从 A 改成 B）
+-- ============================================
+CREATE TABLE IF NOT EXISTS user_name_change_logs (
+  id BIGSERIAL PRIMARY KEY,
+  user_id BIGINT NOT NULL,
+  old_name VARCHAR(50),
+  new_name VARCHAR(50),
+  operator_id BIGINT,
+  operator_name VARCHAR(50),
+  operator_email VARCHAR(100),
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- ============================================
 -- 1. 同步任务记录表
 -- ============================================
 CREATE TABLE IF NOT EXISTS sync_tasks (
@@ -199,6 +213,7 @@ CREATE INDEX IF NOT EXISTS idx_sku_mapping_saihu ON sku_mapping(saihu_sku);
 CREATE INDEX IF NOT EXISTS idx_dwd_inventory_sku ON dwd_inventory(unified_sku);
 CREATE INDEX IF NOT EXISTS idx_dwd_finance_date ON dwd_finance_profit(stat_date);
 CREATE INDEX IF NOT EXISTS idx_dws_summary_date ON dws_daily_summary(stat_date);
+CREATE INDEX IF NOT EXISTS idx_name_logs_user ON user_name_change_logs(user_id);
 
 -- ============================================
 -- 测试数据（SKU映射）

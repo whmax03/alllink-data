@@ -25,8 +25,8 @@ export function createApiRouter(env: Env): Connect.NextHandleFunction {
 
     // CORS 头
     res.setHeader('Access-Control-Allow-Origin', '*')
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS')
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization')
     if (method === 'OPTIONS') {
       res.writeHead(204)
       res.end()
@@ -35,7 +35,7 @@ export function createApiRouter(env: Env): Connect.NextHandleFunction {
 
     // 解析请求体
     let body: any = {}
-    if (method === 'POST') {
+    if (method === 'POST' || method === 'PUT' || method === 'DELETE') {
       const chunks: Buffer[] = []
       for await (const chunk of req) {
         chunks.push(chunk as Buffer)
@@ -218,6 +218,105 @@ export function createApiRouter(env: Env): Connect.NextHandleFunction {
               message: '密码修改成功',
             },
           })
+        }
+      }
+
+      // ==================== 账号管理接口 ====================
+      if (path.startsWith('/users/') || path === '/users') {
+        const supabase = getSupabaseAdmin(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY)
+
+        // 从 Authorization: Bearer <token> 解析当前操作人（未登录/无效则为 null）
+        const operator = await resolveOperator(supabase, req)
+
+        // 该账号是否拥有 admin 角色（admin 账号禁止改姓名）
+        async function hasAdminRole(userId: number | string): Promise<boolean> {
+          // role_codes 表不存在等异常时，回退看 users.role 字段
+          const { data, error } = await supabase
+            .from('user_roles')
+            .select('role_code')
+            .eq('user_id', userId)
+          if (!error && data) {
+            return data.some((r: any) => r.role_code === 'admin')
+          }
+          const { data: u } = await supabase.from('users').select('role').eq('id', userId).limit(1)
+          return (u?.[0]?.role || '') === 'admin'
+        }
+
+        // 修改姓名：PUT /users/:id/name  { name }
+        const nameMatch = path.match(/^\/users\/([^/]+)\/name$/)
+        if (nameMatch && method === 'PUT') {
+          const userId = nameMatch[1]
+          const newName = String(body.name || '').trim()
+          if (!newName) return json(res, { code: 400, message: '姓名不能为空' }, 400)
+          if (newName.length < 2 || newName.length > 20) {
+            return json(res, { code: 400, message: '姓名长度 2-20 个字符' }, 400)
+          }
+
+          const { data: users, error: findErr } = await supabase
+            .from('users')
+            .select('*')
+            .eq('id', userId)
+            .limit(1)
+          if (findErr) return json(res, { code: 500, message: '查询账号失败: ' + findErr.message }, 500)
+          if (!users || !users.length) return json(res, { code: 404, message: '账号不存在' }, 404)
+
+          const target = users[0]
+          // admin 账号不支持修改姓名
+          if (await hasAdminRole(target.id)) {
+            return json(res, { code: 403, message: 'admin 账号不支持修改姓名' }, 403)
+          }
+
+          const oldName = target.name || target.username || ''
+          if (oldName === newName) {
+            return json(res, { code: 200, success: true, message: '姓名未发生变化', data: { id: target.id, name: newName } })
+          }
+
+          const { error: updateErr } = await supabase
+            .from('users')
+            .update({ name: newName, updated_at: new Date().toISOString() })
+            .eq('id', target.id)
+          if (updateErr) return json(res, { code: 500, message: '姓名修改失败: ' + updateErr.message }, 500)
+
+          // 记录修改日志：修改前 / 修改后 / 操作人 / 操作时间
+          const { error: logErr } = await supabase.from('user_name_change_logs').insert({
+            user_id: target.id,
+            old_name: oldName,
+            new_name: newName,
+            operator_id: operator?.id ?? null,
+            operator_name: operator?.name ?? (body.operator || null),
+            operator_email: operator?.email ?? null,
+            created_at: new Date().toISOString(),
+          })
+          if (logErr) {
+            console.error('[姓名修改日志写入失败]', logErr.message)
+          }
+
+          return json(res, {
+            code: 200,
+            success: true,
+            message: '姓名修改成功',
+            data: { id: target.id, name: newName, old_name: oldName },
+          })
+        }
+
+        // 姓名修改日志：GET /users/:id/name-logs
+        const logMatch = path.match(/^\/users\/([^/]+)\/name-logs$/)
+        if (logMatch && method === 'GET') {
+          const userId = logMatch[1]
+          const { data, error } = await supabase
+            .from('user_name_change_logs')
+            .select('*')
+            .eq('user_id', userId)
+            .order('created_at', { ascending: false })
+            .limit(200)
+          if (error) {
+            // 表未创建时给出可执行提示，而不是直接 500
+            return json(res, {
+              code: 500,
+              message: '查询修改日志失败（请先执行建表 SQL）：' + error.message,
+            }, 500)
+          }
+          return json(res, { code: 200, success: true, data: { list: data || [] } })
         }
       }
 
@@ -515,4 +614,25 @@ export function createApiRouter(env: Env): Connect.NextHandleFunction {
 function json(res: any, data: any, status = 200) {
   res.writeHead(status, { 'Content-Type': 'application/json' })
   res.end(JSON.stringify(data))
+}
+
+/** 从 Authorization: Bearer <JWT> 中解析当前操作人（失败返回 null，不阻断主流程） */
+async function resolveOperator(supabase: any, req: any): Promise<{ id: any; name: string; email: string } | null> {
+  try {
+    const auth = String(req.headers?.authorization || '')
+    const token = auth.replace(/^Bearer\s+/i, '').trim()
+    if (!token) return null
+    const parts = token.split('.')
+    if (parts.length < 2) return null
+    const base64 = parts[1].replace(/-/g, '+').replace(/_/g, '/')
+    const payload = JSON.parse(Buffer.from(base64, 'base64').toString('utf-8'))
+    const userId = payload?.userId
+    if (!userId) return null
+    const { data } = await supabase.from('users').select('id, name, username, email').eq('id', userId).limit(1)
+    const u = data?.[0]
+    if (!u) return null
+    return { id: u.id, name: u.name || u.username || '', email: u.email || '' }
+  } catch {
+    return null
+  }
 }

@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue'
-import { queryApi, inventoryApi } from '../api'
+import { queryApi, inventoryApi, type InventoryExportParams } from '../api'
 import dayjs from 'dayjs'
-import { Box, Ship, Location, Refresh, Search, CopyDocument, EditPen } from '@element-plus/icons-vue'
+import { Box, Ship, Location, Refresh, Search, CopyDocument, EditPen, Download, SortDown, SortUp, Sort } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import { i18n } from '../i18n'
 import { useAuthStore } from '../stores/auth'
@@ -28,6 +28,42 @@ const selectedWarehouseType = ref('')
 
 // 国内仓平台筛选条件
 const selectedDomesticPlatform = ref('')
+
+// ---------- 可用库存排序（服务端排序，对整个列表生效） ----------
+// '' = 默认（后端按 id 倒序，最新导入在前）；desc = 从大到小；asc = 从小到大
+// 注意：列表是分页的，前端排序只会排「当前页」，必须交给后端排序
+type StockSortOrder = '' | 'desc' | 'asc'
+const stockSortOrder = ref<StockSortOrder>('')
+
+/** 点击列头循环切换：默认 → 降序 → 升序 → 默认 */
+function toggleStockSort() {
+  stockSortOrder.value =
+    stockSortOrder.value === '' ? 'desc' :
+    stockSortOrder.value === 'desc' ? 'asc' : ''
+  currentPage.value = 1
+  loadInventory()
+}
+
+/** 排序图标：降序显示 SortDown、升序显示 SortUp、默认显示中性 Sort */
+const stockSortIcon = computed(() => {
+  if (stockSortOrder.value === 'desc') return SortDown
+  if (stockSortOrder.value === 'asc') return SortUp
+  return Sort
+})
+
+/** 列头 tooltip：说明当前状态与下一步点击的效果 */
+const stockSortTip = computed(() => {
+  if (stockSortOrder.value === 'desc') return t('inventory.sortDescTip')
+  if (stockSortOrder.value === 'asc') return t('inventory.sortAscTip')
+  return t('inventory.sortDefaultTip')
+})
+
+/** 排序参数：未排序时不传，让后端走默认顺序 */
+const sortParams = computed<{ sort_by?: 'stock_qty'; sort_order?: 'asc' | 'desc' }>(() =>
+  stockSortOrder.value
+    ? { sort_by: 'stock_qty', sort_order: stockSortOrder.value }
+    : {}
+)
 
 // 国内仓平台选项（按 platform:xxx 权限码过滤；admin 恒全量）
 const domesticPlatformOptions = computed(() => [
@@ -131,6 +167,8 @@ async function loadInventory() {
       pageSize: pageSize.value,
       pageNo: currentPage.value,
       sku: searchSku.value || undefined,
+      // 可用库存排序（服务端排序，整表生效；未选择时不传，后端默认最新导入在前）
+      ...sortParams.value,
     }
 
     let res;
@@ -299,6 +337,153 @@ async function copySku(sku?: string) {
   }
 }
 
+// ---------- 导出表格 ----------
+// 权限：国内仓 export:domestic / 海外仓 export:overseas 各自独立
+// 与后端 require_permission 同码，前端只做显隐，后端强制校验
+const canExportDomestic = computed(() => authStore.hasPerm('export:domestic'))
+const canExportOverseas = computed(() => authStore.hasPerm('export:overseas'))
+// 当前 Tab 是否有导出权限（切 Tab 后按钮随之显隐）
+const canExport = computed(() =>
+  activeTab.value === 'domestic' ? canExportDomestic.value : canExportOverseas.value
+)
+const exportLoading = ref(false)
+
+/** 当前筛选条件（用于导出与提示），按 Tab 分别收集 */
+const currentFilters = computed(() => {
+  if (activeTab.value === 'domestic') {
+    return {
+      sku: searchSku.value || undefined,
+      platform: selectedDomesticPlatform.value || undefined,
+    }
+  }
+  return {
+    sku: searchSku.value || undefined,
+    platform: selectedPlatform.value || undefined,
+    // 亚马逊用 warehouse_type（仓库类型）筛选，其他平台用 country；金蝶两者都不用
+    warehouse_type: isAmazon.value ? (selectedWarehouseType.value || undefined) : undefined,
+    country: (!isAmazon.value && !isKingdee.value) ? (selectedCountry.value || undefined) : undefined,
+  }
+})
+
+/** 筛选条件的中文描述，用于按钮 tooltip 与导出确认 */
+const filterDesc = computed(() => {
+  const parts: string[] = []
+  const f = currentFilters.value
+  if (f.sku) parts.push(`SKU: ${f.sku}`)
+  if (f.platform) parts.push(`${t('inventory.platform')}: ${f.platform}`)
+  if (f.warehouse_type) parts.push(`${t('inventory.warehouseType')}: ${f.warehouse_type}`)
+  if (f.country) parts.push(`国家: ${f.country}`)
+  return parts.length ? parts.join(' · ') : ''
+})
+
+const hasFilter = computed(() => !!filterDesc.value)
+
+/**
+ * 执行导出。
+ * mode=filtered：带上当前 Tab 的筛选条件，导出「页面上看到的这批数据」（跨全部分页）
+ * mode=all：不带任何筛选，导出当前账号数据权限内的全部库存
+ */
+async function handleExport(mode: 'filtered' | 'all') {
+  if (exportLoading.value) return
+  if (!canExport.value) {
+    // 提示具体缺哪个仓的导出权限，便于用户找管理员精准开通
+    const permName = activeTab.value === 'domestic'
+      ? t('perms.node.export:domestic')
+      : t('perms.node.export:overseas')
+    ElMessage.warning(t('inventory.exportNoPerm').replace('{perm}', permName))
+    return
+  }
+
+  exportLoading.value = true
+  const tip = ElMessage({
+    message: t('inventory.exporting'),
+    type: 'info',
+    duration: 0,
+  })
+  try {
+    const params: InventoryExportParams = mode === 'all'
+      ? { mode: 'all', ...sortParams.value }
+      // 导出顺序与页面保持一致：带上当前列的排序
+      : { mode: 'filtered', ...currentFilters.value, ...sortParams.value }
+
+    const res = activeTab.value === 'domestic'
+      ? await queryApi.exportDomesticInventory(params)
+      : await queryApi.exportOverseasInventory(params)
+
+    // 后端出错时会返回 JSON（而非文件流），responseType=blob 下需要手动解析出错误文案
+    const blob = res.data as Blob
+    if (blob.type.includes('application/json')) {
+      const text = await blob.text()
+      let msg = t('inventory.exportFailed')
+      try {
+        const json = JSON.parse(text)
+        msg = json.message || json.detail || msg
+      } catch { /* 非 JSON 时用通用文案 */ }
+      ElMessage.error(msg)
+      return
+    }
+
+    // 文件名优先取后端 Content-Disposition（含中文时是 filename*=UTF-8''...）
+    const filename = parseFilename(res.headers?.['content-disposition']) || defaultExportFilename(mode)
+    saveBlob(blob, filename)
+
+    const rows = Number(res.headers?.['x-export-rows'] || 0)
+    ElMessage.success(t('inventory.exportSuccess').replace('{count}', String(rows || '-').toLocaleString()))
+  } catch (e: any) {
+    // 403（无权限）/ 400（超上限）等：错误体是 blob，需先读文本
+    let msg = t('inventory.exportFailed')
+    const data = e?.response?.data
+    if (data instanceof Blob) {
+      try {
+        const json = JSON.parse(await data.text())
+        msg = json.message || json.detail || msg
+      } catch { /* 保留通用文案 */ }
+    } else if (e?.response?.data?.message) {
+      msg = e.response.data.message
+    } else if (e?.message) {
+      msg = e.message
+    }
+    ElMessage.error(msg)
+  } finally {
+    tip.close()
+    exportLoading.value = false
+  }
+}
+
+/** 解析 Content-Disposition 中的文件名（兼容 filename*=UTF-8'' 与普通 filename） */
+function parseFilename(disposition?: string): string {
+  if (!disposition) return ''
+  const star = /filename\*=UTF-8''([^;]+)/i.exec(disposition)
+  if (star?.[1]) {
+    try {
+      return decodeURIComponent(star[1].trim())
+    } catch {
+      /* 解码失败回退到普通 filename */
+    }
+  }
+  const plain = /filename="?([^";]+)"?/i.exec(disposition)
+  return plain?.[1]?.trim() || ''
+}
+
+function defaultExportFilename(mode: 'filtered' | 'all'): string {
+  const scope = activeTab.value === 'domestic' ? '国内仓' : '海外仓'
+  const modeLabel = mode === 'all' ? '全量' : '筛选'
+  return `库存_${scope}_${modeLabel}_${dayjs().format('YYYYMMDD_HHmmss')}.xlsx`
+}
+
+/** 触发浏览器下载 */
+function saveBlob(blob: Blob, filename: string) {
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  // 稍后释放，避免部分浏览器下载中断
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 onMounted(loadInventory)
 </script>
 
@@ -313,6 +498,31 @@ onMounted(loadInventory)
         </div>
       </div>
       <div class="header-right">
+        <!-- 导出：需 data:export 权限；下拉区分「当前筛选结果」与「全量」 -->
+        <el-dropdown
+          v-if="canExport"
+          trigger="click"
+          :disabled="exportLoading"
+          @command="handleExport"
+        >
+          <el-button type="success" :icon="Download" :loading="exportLoading" plain round>
+            {{ t('inventory.export') }}
+          </el-button>
+          <template #dropdown>
+            <el-dropdown-menu>
+              <el-dropdown-item command="filtered" :disabled="!hasFilter">
+                <span class="export-item">{{ t('inventory.exportFiltered') }}</span>
+                <span class="export-item-hint">
+                  {{ hasFilter ? t('inventory.exportCurrentHint').replace('{cond}', filterDesc) : t('inventory.exportNoFilter') }}
+                </span>
+              </el-dropdown-item>
+              <el-dropdown-item command="all" divided>
+                <span class="export-item">{{ t('inventory.exportAll') }}</span>
+                <span class="export-item-hint">{{ t('inventory.exportAllHint') }}</span>
+              </el-dropdown-item>
+            </el-dropdown-menu>
+          </template>
+        </el-dropdown>
         <el-button type="primary" :icon="Refresh" @click="loadInventory" :loading="loading" plain round>
           {{ t('inventory.refresh') }}
         </el-button>
@@ -535,6 +745,20 @@ onMounted(loadInventory)
             </template>
           </el-table-column>
           <el-table-column :label="t('inventory.available')" min-width="100" align="right">
+            <!-- 列头排序开关：点击循环 默认 → 从大到小 → 从小到大（服务端排序，整表生效） -->
+            <template #header>
+              <div class="sort-header">
+                <span>{{ t('inventory.available') }}</span>
+                <el-tooltip :content="stockSortTip" placement="top">
+                  <el-icon
+                    :class="['sort-icon', { active: !!stockSortOrder }]"
+                    @click="toggleStockSort"
+                  >
+                    <component :is="stockSortIcon" />
+                  </el-icon>
+                </el-tooltip>
+              </div>
+            </template>
             <template #default="{ row }">
               <span :class="['stock-value', getStockColor(row.stock_qty)]">
                 {{ row.stock_qty }}
@@ -624,6 +848,7 @@ onMounted(loadInventory)
         :rows="3"
         maxlength="500"
         show-word-limit
+        resize="none"
         :placeholder="t('inventory.remarkPlaceholder')"
       />
       <template #footer>
@@ -678,6 +903,32 @@ onMounted(loadInventory)
   margin: 4px 0 0;
   font-size: 14px;
   color: #64748b;
+}
+
+/* 顶部操作区：导出下拉 + 刷新并排 */
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+/* 导出下拉项：主标题 + 灰色说明两行，说明当前导出范围 */
+.export-item {
+  display: block;
+  font-weight: 600;
+  color: #1e293b;
+  line-height: 1.4;
+}
+
+.export-item-hint {
+  display: block;
+  font-size: 11px;
+  color: #94a3b8;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  line-height: 1.4;
 }
 
 /* 统计卡片设计 */
@@ -901,6 +1152,32 @@ onMounted(loadInventory)
 .stock-value.success { color: #10b981; }
 .stock-value.warning { color: #f59e0b; }
 .stock-value.danger { color: #ef4444; }
+
+/* 列头排序开关：文字 + 排序图标同行，右对齐贴合数值列 */
+.sort-header {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
+  width: 100%;
+}
+
+.sort-icon {
+  font-size: 13px;
+  color: #cbd5e1;
+  cursor: pointer;
+  transition: color 0.15s, transform 0.15s;
+}
+
+.sort-icon:hover {
+  color: #3b82f6;
+  transform: scale(1.15);
+}
+
+/* 已启用排序时图标高亮，便于一眼看出当前处于排序状态 */
+.sort-icon.active {
+  color: #3b82f6;
+}
 
 .time-text, .date-text {
   color: #94a3b8;
